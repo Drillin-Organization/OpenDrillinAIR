@@ -109,6 +109,73 @@ body { background: var(--bg); color: var(--fg); font-family: var(--body); overfl
 .lbl { font: 500 9.5px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); }
 .sys { display: grid; grid-template-columns: auto 1fr; gap: 5px 10px; font: 400 11px/1.3 var(--mono); }
 .sys dt { color: var(--dim); } .sys dd { margin: 0; overflow-wrap: anywhere; }
+/* Rooms browser: the rooms she remembers, their maps and camera memory. */
+.roomsBtn { font: 500 11px/1 var(--mono); letter-spacing: .06em; color: var(--fg); background: var(--panel); border: 1px solid var(--faint);
+  border-radius: 999px; padding: 7px 12px; cursor: pointer; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+.roomsBtn:hover { border-color: var(--accent); } .roomsBtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rooms { position: absolute; inset: 0; z-index: 8; display: grid; grid-template-columns: 300px 1fr; background: var(--bg); color: var(--fg); }
+.rooms aside { border-right: 1px solid var(--faint); overflow: auto; padding: 14px 12px 20px; display: flex; flex-direction: column; gap: 8px; }
+.rooms aside header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.rooms aside h2 { margin: 0; font: 600 17px/1.1 var(--display); margin-right: auto; }
+.rooms .x { font: 400 18px/1 var(--body); background: none; border: 1px solid var(--faint); color: var(--fg); border-radius: 8px; width: 32px; height: 32px; cursor: pointer; }
+.rooms .x:focus-visible, .roomCard:focus-visible, .film button:focus-visible, .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.roomCard { display: grid; grid-template-columns: 64px 1fr; gap: 10px; text-align: left; padding: 8px; border-radius: 12px; cursor: pointer;
+  background: var(--panel); border: 1px solid var(--faint); color: var(--fg); font: 400 12px/1.35 var(--body); }
+.roomCard[aria-current="true"] { border-color: var(--accent); }
+.roomCard img, .roomCard .noimg { width: 64px; height: 84px; object-fit: cover; border-radius: 8px; background: var(--faint); }
+.roomCard b { display: block; font: 600 13.5px/1.25 var(--display); margin-bottom: 2px; overflow-wrap: anywhere; }
+.roomCard small { display: block; color: var(--dim); font: 400 10.5px/1.45 var(--mono); }
+.roomMain { overflow: auto; padding: 16px 18px 24px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.roomHead h3 { margin: 0 0 4px; font: 600 20px/1.2 var(--display); }
+.roomHead p { margin: 0; color: var(--dim); font-size: 13px; line-height: 1.5; max-width: 70ch; }
+.roomHead .stats { margin-top: 6px; font: 400 11px/1.4 var(--mono); color: var(--dim); }
+.roomBody { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.mapBox, .viewer { background: var(--panel); border: 1px solid var(--faint); border-radius: 14px; padding: 10px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.mapBox canvas { width: 100%; aspect-ratio: 1 / 1; border-radius: 10px; display: block; cursor: crosshair; }
+.mapKey { display: flex; flex-wrap: wrap; gap: 4px 12px; font: 400 10.5px/1.3 var(--mono); color: var(--dim); }
+.mapKey i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.lbl2 { font: 500 9.5px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); display: flex; align-items: center; gap: 8px; }
+.viewer .pics { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.viewer .pics.blend { grid-template-columns: 1fr; position: relative; }
+.viewer .pics img { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 10px; background: var(--faint); display: block; }
+.viewer .pics img.depth { image-rendering: pixelated; }
+.viewer .pics.blend img.depth { position: absolute; top: 0; left: 0; width: 100%; height: 100%; aspect-ratio: auto; opacity: .55; mix-blend-mode: screen; }
+.viewer .pics.nodepth { grid-template-columns: 1fr; }
+.viewer .meta { font: 400 11px/1.45 var(--mono); color: var(--dim); }
+.seg { display: inline-flex; border: 1px solid var(--faint); border-radius: 999px; overflow: hidden; margin-left: auto; }
+.seg button { font: 400 10.5px/1 var(--mono); color: var(--dim); background: none; border: 0; padding: 6px 10px; cursor: pointer; }
+.seg button[aria-pressed="true"] { color: var(--fg); background: var(--faint); }
+.film { display: grid; grid-auto-flow: column; grid-auto-columns: 78px; gap: 6px; overflow-x: auto; padding-bottom: 6px; }
+.film button { padding: 0; border: 2px solid transparent; border-radius: 9px; background: none; cursor: pointer; position: relative; }
+.film button[aria-current="true"] { border-color: var(--accent); }
+.film img { width: 74px; height: 98px; object-fit: cover; border-radius: 7px; display: block; background: var(--faint); }
+.film time { position: absolute; left: 4px; bottom: 4px; font: 400 9.5px/1 var(--mono); color: #fff; text-shadow: 0 1px 3px #000; }
+.film .more { display: grid; place-items: center; font: 400 11px/1.3 var(--mono); color: var(--dim); border: 1px dashed var(--faint); border-radius: 9px; height: 98px; }
+.roomEmpty { color: var(--dim); font-size: 13px; padding: 30px 0; }
+.live { background: var(--panel); border: 1px solid var(--faint); border-radius: 14px; padding: 12px 14px; display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 10px 18px; }
+.live .think { font: 400 13.5px/1.55 var(--body); }
+.live .think b { font: 600 16px/1.3 var(--display); display: block; margin: 4px 0 2px; }
+.live .think q { display: block; color: var(--dim); font-style: italic; margin-top: 6px; quotes: none; }
+.conf { display: inline-block; font: 500 10.5px/1 var(--mono); padding: 3px 7px; border-radius: 999px; border: 1px solid var(--faint); margin-left: 6px; vertical-align: 2px; }
+.live .who { font: 400 12px/1.5 var(--body); }
+.live .who div { padding: 3px 0; border-top: 1px solid var(--faint); } .live .who div:first-child { border-top: 0; }
+.live .who b { font-weight: 600; }
+.live .who small { color: var(--dim); font: 400 10.5px/1.4 var(--mono); display: block; }
+.live details { grid-column: 1 / -1; font: 400 11px/1.5 var(--mono); color: var(--dim); }
+.live details summary { cursor: pointer; } .live details li { margin: 4px 0; }
+.live .elsewhere { grid-column: 1 / -1; font-size: 12.5px; color: var(--dim); }
+.live .elsewhere button, .helpers button { font: inherit; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; }
+.pulse { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #2fbf71; box-shadow: 0 0 8px #2fbf71; margin-right: 6px; animation: breathe 2.4s ease-in-out infinite; }
+.helpers { margin-top: auto; padding: 10px; border-radius: 12px; background: var(--panel); border: 1px solid var(--faint); font: 400 11px/1.5 var(--mono); color: var(--dim); }
+.helpers b { color: var(--fg); font-weight: 500; } .helpers ul { margin: 4px 0 0; padding-left: 14px; } .helpers li { margin: 2px 0; overflow-wrap: anywhere; }
+.nowBadge { font: 500 9.5px/1 var(--mono); color: #2fbf71; letter-spacing: .08em; text-transform: uppercase; }
+.maps { font: 400 11px/1.5 var(--mono); color: var(--dim); margin-top: 6px; } .maps li { margin: 2px 0; }
+@media (max-width: 900px) { .live { grid-template-columns: 1fr; } }
+@media (max-width: 900px) {
+  .rooms { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  .rooms aside { border-right: 0; border-bottom: 1px solid var(--faint); max-height: 34vh; }
+  .roomBody { grid-template-columns: 1fr; }
+}
 [hidden] { display: none !important; }
 @media (max-width: 760px) {
   .feed { top: auto; bottom: 64px; left: 12px; right: 12px; width: auto; max-height: 34%; mask-image: none; -webkit-mask-image: none; overflow: auto; }
@@ -125,6 +192,7 @@ body { background: var(--bg); color: var(--fg); font-family: var(--body); overfl
 <div class="hud">
   <div class="top">
     <div class="brand"><h1>Soul Galaxy</h1><div class="sub" id="counts">—</div></div>
+    <button class="roomsBtn" id="roomsBtn" type="button" aria-haspopup="dialog">Rooms</button>
     <span class="status" id="status" data-state="off"><i></i><span>Connecting</span></span>
   </div>
   <div class="caption" id="caption" hidden><b id="captionKind">Heard</b><span id="captionText"></span></div>
@@ -138,6 +206,11 @@ body { background: var(--bg); color: var(--fg); font-family: var(--body); overfl
 <section class="now" id="now" aria-label="Right now" hidden><h2>Right now</h2><div id="nowChars" style="display:contents"></div>
   <div class="card sysCard"><dl class="sys" id="nowSys"></dl></div></section>
 <section class="feed" id="feed" aria-live="polite" aria-label="Thought stream"><h2>Thought stream</h2></section>
+<section class="rooms" id="rooms" role="dialog" aria-modal="true" aria-label="Rooms she remembers" hidden>
+  <aside><header><h2>Rooms</h2><button class="x" id="roomsClose" type="button" aria-label="Close rooms">×</button></header><div id="roomList" style="display:contents"></div>
+    <div class="helpers" id="helpers" aria-live="polite">Helpers: —</div></aside>
+  <div class="roomMain" id="roomMain"><div class="roomEmpty">Pick a room.</div></div>
+</section>
 <div class="tip" id="tip" hidden></div>
 <script>
 (() => {
@@ -622,6 +695,249 @@ body { background: var(--bg); color: var(--fg); font-family: var(--body); overfl
   setInterval(loadGraph, 8000);  // needs, feelings, plans, rooms and characters in the room
   loadGraph();
   connect();
+})();
+</script>
+<script>
+// Rooms browser: rooms she remembers, the LiDAR scan + camera-memory map,
+// things and places, the camera's path, and the pictures with their depth.
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const panel = $('#rooms'), list = $('#roomList'), main = $('#roomMain');
+  const R = { rooms: [], room: null, map: null, frames: [], frame: null, mode: 'side', hover: null, view: null, live: null };
+  let liveTimer = null, listTimer = null;
+  async function pollLive() {
+    try { R.live = await (await fetch('/rooms/live', { cache: 'no-store' })).json(); } catch { R.live = null; }
+    renderLive(); renderHelpers(); drawMap();
+    if (R.live?.room && !R.rooms.some((r) => r.id === R.live.room)) refreshList();
+  }
+  async function refreshList() {
+    try { R.rooms = await (await fetch('/rooms', { cache: 'no-store' })).json(); } catch { return; }
+    if (R.room && !R.rooms.some((r) => r.id === R.room.id)) { // joined into another room meanwhile
+      const into = R.rooms.find((r) => r.maps?.some((m) => m.id === R.room.id));
+      if (into) { pick(into.id); return; }
+    }
+    if (R.room) R.room = R.rooms.find((r) => r.id === R.room.id) ?? R.room;
+    renderList();
+  }
+  const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const when = (t) => { if (!t) return '—'; const d = new Date(t), s = (Date.now() - t) / 1000;
+    const ago = s < 90 ? `${Math.round(s)} s ago` : s < 5400 ? `${Math.round(s / 60)} min ago` : s < 129600 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`;
+    return `${d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} ${d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })} · ${ago}`; };
+  const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+  async function open() {
+    panel.hidden = false;
+    try { R.rooms = await (await fetch('/rooms', { cache: 'no-store' })).json(); } catch { R.rooms = []; }
+    try { R.live = await (await fetch('/rooms/live', { cache: 'no-store' })).json(); } catch { R.live = null; }
+    renderList();
+    const start = R.room?.id ?? (R.live?.room && R.rooms.some((r) => r.id === R.live.room) ? R.live.room : R.rooms[0]?.id);
+    if (start) pick(start);
+    clearInterval(liveTimer); clearInterval(listTimer);
+    liveTimer = setInterval(pollLive, 2000); listTimer = setInterval(refreshList, 15000);
+    $('#roomsClose').focus();
+  }
+  function close() { panel.hidden = true; clearInterval(liveTimer); clearInterval(listTimer); $('#roomsBtn').focus(); }
+  $('#roomsBtn').addEventListener('click', open);
+  $('#roomsClose').addEventListener('click', close);
+  addEventListener('keydown', (e) => {
+    if (panel.hidden) return;
+    if (e.key === 'Escape') close();
+    if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && R.frame && document.activeElement?.tagName !== 'INPUT') {
+      const i = R.frames.findIndex((f) => f.t === R.frame.t);
+      const next = R.frames[i + (e.key === 'ArrowRight' ? 1 : -1)];
+      if (next) { showFrame(next); e.preventDefault(); }
+    }
+  });
+
+  function renderList() {
+    if (!R.rooms.length) { list.innerHTML = '<p class="roomEmpty">No rooms yet. They appear once the phone saves a room or camera memory sends pictures.</p>'; return; }
+    list.innerHTML = R.rooms.map((r) => `<button class="roomCard" type="button" data-id="${esc(r.id)}" aria-current="${R.room?.id === r.id}">
+      ${r.cover ? `<img src="/frames/${r.cover}.jpg" alt="" loading="lazy">` : '<div class="noimg"></div>'}
+      <span>${R.live?.room === r.id ? '<span class="nowBadge">● She’s here now</span>' : ''}<b>${esc(r.name || 'Unnamed room')}</b><small>${esc(when(r.lastSeen))}${r.maps?.length > 1 ? ` · ${r.maps.length} maps joined` : ''}</small>
+      <small>${r.keyFrames} key pictures · ${r.things} things · ${r.places} places${r.mapped ? ' · mapped' : ''}</small></span></button>`).join('');
+    list.querySelectorAll('.roomCard').forEach((b) => b.addEventListener('click', () => pick(b.dataset.id)));
+  }
+
+  async function pick(id) {
+    R.room = R.rooms.find((r) => r.id === id) ?? { id };
+    renderList();
+    main.innerHTML = '<div class="roomEmpty">Loading…</div>';
+    const [map, fr] = await Promise.all([
+      fetch(`/rooms/${encodeURIComponent(id)}/map`, { cache: 'no-store' }).then((r) => r.json()).catch(() => null),
+      fetch(`/frames?room=${encodeURIComponent(id)}&limit=80`, { cache: 'no-store' }).then((r) => r.json()).catch(() => []),
+    ]);
+    R.map = map; R.frames = fr; R.frame = fr[0] ?? null;
+    const r = R.room;
+    main.innerHTML = `<section class="live" id="live" aria-live="polite" aria-label="Her reasoning about where she is"></section>
+      <div class="roomHead"><h3>${esc(r.name || 'Unnamed room')}</h3>
+        ${r.description ? `<p>${esc(r.description)}</p>` : ''}
+        <div class="stats">${r.visits ? `${r.visits} visits · ` : ''}first ${esc(when(r.firstSeen))} · last ${esc(when(r.lastSeen))}<br>${r.frames} pictures kept (${r.keyFrames} key) · ${r.things} things · ${r.places} places${r.scannedAt ? ` · LiDAR scan from ${esc(when(r.scannedAt))}` : ''}${id !== 'unsaved' ? ` · map ${esc(id.slice(0, 8))}` : ''}</div>
+        ${r.maps?.length > 1 ? `<ul class="maps">${r.maps.map((m, i) => `<li>${i === 0 ? 'First saved as' : 'Joined'} map ${esc(m.id.slice(0, 8))}${i ? `${m.aligned ? ` · maps line up (${m.score})` : ' · same room, maps not aligned'}${m.why ? ` · “${esc(m.why)}”` : ''}${m.at ? ` · ${esc(when(m.at))}` : ''}` : ''}</li>`).join('')}</ul>` : ''}</div>
+      <div class="roomBody">
+        <div class="mapBox"><div class="lbl2">Top-down map</div><canvas id="roomMap" aria-label="Top-down map of the room: scanned floor and obstacles, things and places she knows, and where the camera has been. Click the camera path to see that picture."></canvas>
+          <div class="mapKey"><span><i style="background:var(--mapFree)"></i>floor (LiDAR)</span><span><i style="background:var(--mapBlock)"></i>walls, furniture</span><span><i style="background:var(--mapMemFree)"></i>floor (camera memory)</span><span><i style="background:var(--mapMemBlock)"></i>obstacles (camera memory)</span><span><i style="background:#f2b84b;border-radius:50%"></i>things</span><span><i style="background:#2fbf71"></i>places</span><span><i style="background:var(--accent);border-radius:50%"></i>camera path</span><span><i style="background:#ff5aaa;border-radius:50%"></i>her, now</span><span>▲ you</span></div>
+          <div id="mapNote" class="meta"></div></div>
+        <div class="viewer" id="viewer"></div>
+      </div>
+      <div><div class="lbl2" style="margin-bottom:8px">Camera memory · newest first</div><div class="film" id="film"></div></div>`;
+    renderFilm(); showFrame(R.frame); renderLive(); drawMap();
+    const c = $('#roomMap');
+    c.addEventListener('mousemove', (e) => { const h = nearestPath(e); if (h?.t !== R.hover?.t) { R.hover = h; drawMap(); } c.title = h ? new Date(h.t).toLocaleTimeString() : ''; });
+    c.addEventListener('mouseleave', () => { R.hover = null; drawMap(); });
+    c.addEventListener('click', async (e) => { const h = nearestPath(e); if (h) await jumpTo(h.t); });
+  }
+
+  function renderFilm(append) {
+    const film = $('#film'); if (!film) return;
+    if (!R.frames.length) { film.innerHTML = '<div class="roomEmpty">No pictures kept for this room yet (Settings › Camera memory on the phone).</div>'; return; }
+    film.innerHTML = R.frames.map((f) => `<button type="button" data-t="${f.t}" aria-current="${R.frame?.t === f.t}" aria-label="Picture from ${esc(new Date(f.t).toLocaleString())}">
+      <img src="/frames/${f.t}.jpg" alt="" loading="lazy"><time>${new Date(f.t).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</time></button>`).join('')
+      + (R.frames.length >= 80 ? '<button type="button" class="more" id="filmMore">Older…</button>' : '');
+    film.querySelectorAll('button[data-t]').forEach((b) => b.addEventListener('click', () => showFrame(R.frames.find((f) => String(f.t) === b.dataset.t))));
+    $('#filmMore')?.addEventListener('click', loadOlder);
+  }
+  async function loadOlder() {
+    const last = R.frames.at(-1); if (!last) return;
+    const more = await fetch(`/frames?room=${encodeURIComponent(R.room.id)}&before=${last.t}&limit=80`, { cache: 'no-store' }).then((r) => r.json()).catch(() => []);
+    if (!more.length) { $('#filmMore')?.remove(); return; }
+    R.frames.push(...more); renderFilm();
+  }
+  async function jumpTo(t) {
+    let f = R.frames.find((x) => x.t === t);
+    while (!f && R.frames.length && R.frames.at(-1).t > t) { const n = R.frames.length; await loadOlder(); if (R.frames.length === n) break; f = R.frames.find((x) => x.t === t); }
+    if (f) showFrame(f);
+  }
+
+  function showFrame(f) {
+    const v = $('#viewer'); if (!v) return;
+    R.frame = f ?? null;
+    document.querySelectorAll('#film button[data-t]').forEach((b) => b.setAttribute('aria-current', String(f && b.dataset.t === String(f.t))));
+    document.querySelector(`#film button[data-t="${f?.t}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    if (!f) { v.innerHTML = '<div class="lbl2">Picture</div><div class="roomEmpty">No picture selected.</div>'; drawMap(); return; }
+    const modes = f.depth ? `<div class="seg" role="group" aria-label="Depth view"><button type="button" data-m="side" aria-pressed="${R.mode === 'side'}">Side by side</button><button type="button" data-m="blend" aria-pressed="${R.mode === 'blend'}">Overlay</button><button type="button" data-m="photo" aria-pressed="${R.mode === 'photo'}">Photo</button></div>` : '';
+    const cls = !f.depth || R.mode === 'photo' ? 'nodepth' : R.mode === 'blend' ? 'blend' : '';
+    v.innerHTML = `<div class="lbl2">Picture ${modes}</div>
+      <div class="pics ${cls}"><img src="/frames/${f.t}.jpg" alt="Camera picture">${f.depth && R.mode !== 'photo' ? `<img class="depth" src="/frames/${f.t}/depth.png" alt="LiDAR depth: warm is near, blue is far">` : ''}</div>
+      <div class="meta">${esc(new Date(f.t).toLocaleString())}${f.key ? ' · key picture' : ''}${f.studied ? ' · studied while dreaming' : ''}<br>camera at x ${f.x}, z ${f.z}${f.characters?.length ? ` · ${esc(f.characters.join(', '))} in view` : ''}${f.depth ? ' · depth: warm near, blue far' : ' · no depth'} · ← → to step</div>`;
+    v.querySelectorAll('.seg button').forEach((b) => b.addEventListener('click', () => { R.mode = b.dataset.m; showFrame(R.frame); }));
+    drawMap();
+  }
+
+  // ---------- live: where she thinks she is ----------
+  function renderLive() {
+    const box = $('#live'); if (!box) return;
+    const L = R.live;
+    if (!L || !L.connected) { box.innerHTML = `<div class="elsewhere">The phone isn't connected: her reasoning about where she is shows here when it is.${L?.beliefs?.[0] ? ` Last she thought: <b>${esc(L.beliefs[0].room)}</b> (${esc(when(L.beliefs[0].at))}).` : ''}</div>`; return; }
+    const here = L.room && R.room?.id === L.room;
+    const b = (L.beliefs ?? []).find((x) => !L.mapId || x.mapId === L.mapId) ?? L.beliefs?.[0];
+    const rec = L.recognition?.mapId === L.mapId ? { recognized: 'the phone recognised this saved room', saved: 'the phone just saved this room', new: 'the phone doesn\'t recognise this room yet' }[L.recognition.status] ?? L.recognition.status : (L.mapId ? 'the phone is in a saved room' : 'the phone hasn\'t saved this room yet');
+    const think = b ? `<div class="think"><span class="lbl2"><span class="pulse"></span>She thinks she's in</span><b>${esc(b.room)}<span class="conf">${Math.round(b.confidence * 100)}%</span></b>
+        ${esc(b.where)}${b.user ? ` · you: ${esc(b.user)}` : ''}<q>${esc(b.reasoning)}</q>
+        <small class="meta">${esc(when(b.at))}${b.by ? ` · ${esc(b.by)}` : ''} · ${esc(rec)}${L.mapId ? ` · map ${esc(L.mapId.slice(0, 8))}` : ''}</small></div>`
+      : `<div class="think"><span class="lbl2"><span class="pulse"></span>Where is she?</span><b>${esc(L.roomName || 'Not sure yet')}</b>A helper is working it out (needs background helpers running). ${esc(rec)}.</div>`;
+    const who = `<div class="who"><span class="lbl2">Right now</span>${(L.characters ?? []).map((c) => `<div><b>${esc(c.name)}</b>${c.near ? ` · ${esc(c.near)}` : ''}<small>${esc(c.doing || 'resting')}</small></div>`).join('') || '<div>No character placed.</div>'}
+      ${L.user ? `<div><b>You</b>${L.user.near ? ` · ${esc(L.user.near)}` : ''}</div>` : ''}</div>`;
+    const elsewhere = !here && L.room ? `<div class="elsewhere">She's in ${esc(L.roomName || 'another room')} now · <button type="button" id="goLive">show that room</button></div>` : '';
+    const hist = (L.beliefs ?? []).slice(1, 8);
+    box.innerHTML = think + who + elsewhere + (hist.length ? `<details><summary>Earlier reasoning (${hist.length})</summary><ul>${hist.map((x) => `<li>${esc(when(x.at))} · <b>${esc(x.room)}</b> ${Math.round(x.confidence * 100)}% · ${esc(x.where)}<br>${esc(x.reasoning)}</li>`).join('')}</ul></details>` : '');
+    $('#goLive')?.addEventListener('click', () => pick(L.room));
+  }
+  function renderHelpers() {
+    const h = $('#helpers'); const J = R.live?.jobs; if (!h || !J) return;
+    const busy = J.workers.filter((w) => w.busy);
+    h.innerHTML = `<b>Helpers ${J.workers.length} of ${J.target}</b>${J.target === 0 ? ' · off (phone Settings)' : ''}${J.workers.length < J.target ? ' · more starting with the next wake' : ''}
+      <ul>${busy.map((w) => `<li>${esc(w.name)}: ${esc(w.busy)}</li>`).join('')}${J.workers.filter((w) => !w.busy).length ? `<li>${J.workers.filter((w) => !w.busy).length} waiting for work</li>` : ''}</ul>
+      ${J.queued.length ? `<div style="margin-top:6px">Queued: ${J.queued.map((q) => esc(q.title)).join(' · ')}</div>` : ''}
+      ${J.done[0] ? `<div style="margin-top:6px">Last: ${esc(J.done[0].result).slice(0, 140)}</div>` : ''}`;
+  }
+
+  // ---------- map ----------
+  function drawMap() {
+    const c = $('#roomMap'); if (!c) return;
+    const dpr = Math.min(2, devicePixelRatio || 1), size = c.getBoundingClientRect().width;
+    c.width = Math.round(size * dpr); c.height = Math.round(size * dpr);
+    const g = c.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, size, size);
+    const m = R.map, light = css('--mode') === 'light';
+    const C = light
+      ? { bg: '#dfe4ea', free: '#f7f8fa', block: '#7a4a3c', memFree: '#e3ebf9', memBlock: '#b98a7c', text: '#111822' }
+      : { bg: '#0b0f16', free: '#56627a', block: '#d27a5e', memFree: '#2c4166', memBlock: '#8a5443', text: '#e2e8f1' };
+    document.documentElement.style.setProperty('--mapFree', C.free); document.documentElement.style.setProperty('--mapBlock', C.block);
+    document.documentElement.style.setProperty('--mapMemFree', C.memFree); document.documentElement.style.setProperty('--mapMemBlock', C.memBlock);
+    g.fillStyle = C.bg; g.fillRect(0, 0, size, size);
+    // Bounds: the grid, things, places and the path.
+    const livePts = R.live?.connected && R.live.room === R.room?.id ? [...(R.live.characters ?? []), ...(R.live.user ? [R.live.user] : [])] : [];
+    const pts = [...(m?.things ?? []), ...(m?.places ?? []), ...(m?.path ?? []), ...livePts];
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    if (m?.grid) { x0 = m.grid.originX; z0 = m.grid.originZ; x1 = x0 + m.grid.width * m.grid.cell; z1 = z0 + m.grid.height * m.grid.cell; }
+    for (const p of pts) { x0 = Math.min(x0, p.x - 0.5); x1 = Math.max(x1, p.x + 0.5); z0 = Math.min(z0, p.z - 0.5); z1 = Math.max(z1, p.z + 0.5); }
+    const note = $('#mapNote');
+    if (!isFinite(x0)) { g.fillStyle = C.text; g.globalAlpha = .6; g.font = '13px Inter, system-ui'; g.textAlign = 'center'; g.fillText('No map of this room yet', size / 2, size / 2); g.globalAlpha = 1; if (note) note.textContent = ''; R.view = null; return; }
+    const pad = 16, span = Math.max(x1 - x0, z1 - z0, 2), k = (size - pad * 2) / span;
+    const ox = pad + ((size - pad * 2) - (x1 - x0) * k) / 2, oz = pad + ((size - pad * 2) - (z1 - z0) * k) / 2;
+    const X = (x) => ox + (x - x0) * k, Z = (z) => oz + (z - z0) * k;
+    R.view = { X, Z, k };
+    if (m.grid) {
+      const { originX, originZ, cell, rows } = m.grid, s = Math.max(1, cell * k + 0.6);
+      const paint = { '.': C.free, '#': C.block, f: C.memFree, b: C.memBlock };
+      for (let r = 0; r < rows.length; r++) for (let q = 0; q < rows[r].length; q++) {
+        const col = paint[rows[r][q]]; if (!col) continue;
+        g.fillStyle = col; g.fillRect(X(originX + q * cell), Z(originZ + r * cell), s, s);
+      }
+    }
+    // 1 m scale bar.
+    g.strokeStyle = C.text; g.globalAlpha = .55; g.lineWidth = 2; g.beginPath(); g.moveTo(pad, size - pad); g.lineTo(pad + k, size - pad); g.stroke();
+    g.font = '10px "JetBrains Mono", monospace'; g.fillStyle = C.text; g.textAlign = 'left'; g.fillText('1 m', pad, size - pad - 5); g.globalAlpha = 1;
+    // Camera path, older fainter.
+    const path = m.path ?? [], accent = css('--accent') || '#8fb0ff';
+    if (path.length) {
+      const t0 = path[0].t, t1 = path.at(-1).t || t0 + 1;
+      for (const p of path) { g.fillStyle = accent; g.globalAlpha = .18 + .62 * ((p.t - t0) / Math.max(1, t1 - t0)); g.beginPath(); g.arc(X(p.x), Z(p.z), 2.2, 0, Math.PI * 2); g.fill(); }
+      g.globalAlpha = 1;
+    }
+    const cone = (p, color, r) => { // where the camera looked
+      const a = p.yaw, L = 0.9 * k, spread = 0.45;
+      g.fillStyle = color; g.globalAlpha = .28; g.beginPath(); g.moveTo(X(p.x), Z(p.z));
+      g.lineTo(X(p.x) + Math.sin(a - spread) * L, Z(p.z) + Math.cos(a - spread) * L); g.lineTo(X(p.x) + Math.sin(a + spread) * L, Z(p.z) + Math.cos(a + spread) * L); g.closePath(); g.fill();
+      g.globalAlpha = 1; g.beginPath(); g.arc(X(p.x), Z(p.z), r, 0, Math.PI * 2); g.fill(); };
+    if (R.hover) cone(R.hover, accent, 4);
+    if (R.frame) cone(R.frame, light ? '#c2410c' : '#ffb15c', 5);
+    // Places and things with labels.
+    g.font = '11px Inter, system-ui'; g.textAlign = 'left';
+    const label = (x, y, t) => { g.lineWidth = 3; g.strokeStyle = C.bg; g.strokeText(t, x, y); g.fillStyle = C.text; g.fillText(t, x, y); };
+    for (const p of m.places ?? []) { g.fillStyle = '#2fbf71'; g.save(); g.translate(X(p.x), Z(p.z)); g.rotate(Math.PI / 4); g.fillRect(-4, -4, 8, 8); g.restore(); label(X(p.x) + 7, Z(p.z) + 4, p.name); }
+    for (const t of m.things ?? []) {
+      g.fillStyle = t.kind === 'door' ? '#3fb37f' : t.kind === 'window' ? '#5aa9ff' : '#f2b84b';
+      g.beginPath(); g.arc(X(t.x), Z(t.z), 4.5, 0, Math.PI * 2); g.fill(); label(X(t.x) + 7, Z(t.z) + 4, t.name);
+    }
+    // Live: her and the user, when she's in this room.
+    if (R.live?.connected && R.live.room === R.room?.id) {
+      for (const c of R.live.characters ?? []) {
+        g.fillStyle = '#ff5aaa'; g.beginPath(); g.arc(X(c.x), Z(c.z), 6, 0, Math.PI * 2); g.fill();
+        g.strokeStyle = '#ff5aaa'; g.lineWidth = 2; g.beginPath(); g.moveTo(X(c.x), Z(c.z)); g.lineTo(X(c.x) + Math.sin(c.yaw) * 14, Z(c.z) + Math.cos(c.yaw) * 14); g.stroke();
+        label(X(c.x) + 9, Z(c.z) - 6, c.name);
+      }
+      if (R.live.user) {
+        const u = R.live.user, a = u.yaw;
+        g.fillStyle = C.text; g.beginPath();
+        g.moveTo(X(u.x) + Math.sin(a) * 10, Z(u.z) + Math.cos(a) * 10);
+        g.lineTo(X(u.x) + Math.sin(a + 2.5) * 7, Z(u.z) + Math.cos(a + 2.5) * 7);
+        g.lineTo(X(u.x) + Math.sin(a - 2.5) * 7, Z(u.z) + Math.cos(a - 2.5) * 7); g.closePath(); g.fill();
+        label(X(u.x) + 9, Z(u.z) + 12, 'you');
+      }
+    }
+    if (note) note.textContent = `${(x1 - x0).toFixed(1)} × ${(z1 - z0).toFixed(1)} m shown · ${path.length} camera positions${m.grid ? '' : ' · no LiDAR scan or depth yet'}`;
+  }
+  function nearestPath(e) {
+    if (!R.view || !R.map?.path?.length) return null;
+    const r = e.currentTarget.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+    let best = null, bd = 10;
+    for (const p of R.map.path) { const d = Math.hypot(R.view.X(p.x) - mx, R.view.Z(p.z) - my); if (d < bd) { bd = d; best = p; } }
+    return best;
+  }
+  addEventListener('resize', () => { if (!panel.hidden) drawMap(); });
+  matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => { if (!panel.hidden) drawMap(); });
+  if (location.hash === '#rooms') setTimeout(open, 0);
+  addEventListener('hashchange', () => { if (location.hash === '#rooms' && panel.hidden) open(); });
 })();
 </script>
 </body>

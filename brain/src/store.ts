@@ -4,6 +4,7 @@
 //   characters/<name>/    persona.md, memory.md, life.md per character
 //   state.json            last seen, characters already introduced this thread
 import { execFileSync } from "node:child_process";
+import * as groups from "./groups.js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -163,7 +164,22 @@ function placesFile(mapId: string | null | undefined): string {
   return path.join(PLACES, `${(mapId || "unsaved").replace(/[^A-Za-z0-9_-]/g, "")}.json`);
 }
 
+/// Places she knows in this map, plus those from other maps of the same
+/// room (joined), carried into this map's coordinates (its own win).
 export function readPlaces(mapId: string | null | undefined): Record<string, Place> {
+  const own = readPlacesRaw(mapId);
+  if (!mapId) return own;
+  const shared: Record<string, Place> = {};
+  for (const m of groups.members(mapId)) {
+    if (m.mapId === mapId) continue;
+    const xf = groups.between(m.mapId, mapId);
+    if (!xf) continue;
+    for (const [n, p] of Object.entries(readPlacesRaw(m.mapId))) shared[n] = { ...p, ...groups.apply(xf, p) };
+  }
+  return { ...shared, ...own };
+}
+
+export function readPlacesRaw(mapId: string | null | undefined): Record<string, Place> {
   try {
     return JSON.parse(fs.readFileSync(placesFile(mapId), "utf8"));
   } catch {

@@ -3,6 +3,12 @@
 // along as "meanwhile" notes. After a few quiet minutes an "idle" beat wakes
 // it so characters keep living; after a long gap the next wake says how long
 // the user was away (lazy catch-up).
+import type { Grid } from "./map.js";
+import * as jobs from "./jobs.js";
+import * as beliefs from "./beliefs.js";
+import * as groups from "./groups.js";
+import * as roomjoin from "./roomjoin.js";
+import { setLive } from "./rooms-api.js";
 import * as frames from "./frames.js";
 import * as roommap from "./roommap.js";
 import type { Body, BodyEvent } from "./body.js";
@@ -21,12 +27,13 @@ const WAKING = new Set(["user_text", "button", "character_tap", "character_place
 /// Free time: after this long without the user interacting, she's woken to
 /// live on her own, and again after each gap while it lasts (gaps grow if the
 /// user stays away for long, so an app left open doesn't churn).
-const FREE_AFTER_MS = Number(process.env.BRAIN_FREE_AFTER_S ?? 40) * 1000;
+const FREE_AFTER_MS = Number(process.env.BRAIN_FREE_AFTER_S ?? 8) * 1000;
 function freeGapMs(quietMs: number, ignored: number): number {
-  // At least half a minute between free-time wakes (a person doesn't change
-  // what she's doing every few seconds); unanswered ones back off further.
-  const base = quietMs > 30 * 60_000 ? 180_000 : quietMs > 10 * 60_000 ? 90_000 : 30_000;
-  return Math.min(600_000, base * 2 ** Math.min(3, ignored));
+  // She's always up to something: when no plan is running, free time comes
+  // again within seconds (her plans themselves ask for the next one before
+  // they end). Unanswered ones back off a little.
+  const base = quietMs > 30 * 60_000 ? 20_000 : quietMs > 10 * 60_000 ? 10_000 : 4_000;
+  return Math.min(60_000, base * 2 ** Math.min(3, ignored));
 }
 const RETURN_GAP_MS = Number(process.env.BRAIN_RETURN_GAP_MIN ?? 20) * 60_000;
 /// Dreaming: while the phone is away (disconnected, locked, nobody placed)
@@ -272,7 +279,12 @@ export class EventHub {
     body.on("hello", () => this.onHello());
     body.on("frame", (data: Record<string, unknown>) => this.onFrame(data));
     setInterval(() => this.tidyFrames(), 5 * 60_000).unref();
+    // Keep the phone's LiDAR scan of each room (for browsing rooms in the galaxy).
+    setInterval(() => void this.keepScan(), 60_000).unref();
     setTimeout(() => this.tidyFrames(), 20_000).unref();
+    // Background helpers: keep their job queue full (where she is, rooms to study or join, reflection).
+    setInterval(() => this.keepJobs(), 15_000).unref();
+    setLive(() => this.live());
     body.on("event", (e: BodyEvent) => this.onEvent(e));
     body.on("scene", () => {
       this.checkWatched();
@@ -338,6 +350,13 @@ export class EventHub {
     return ys.length ? Math.min(...ys) : null;
   }
 
+  private async keepScan(): Promise<void> {
+    const mapId = this.body.scene?.mapId as string | null;
+    if (!this.body.connected || !mapId || Date.now() - this.body.sceneAt > 10_000) return;
+    const r = await this.body.command("map", {}, 15000).catch(() => null);
+    if (r?.ok && r.data?.rows && (r.data.mapId ?? mapId) === mapId) roommap.savePhone(mapId, r.data as Grid);
+  }
+
   private tidyFrames(): void {
     try {
       const r = frames.thin();
@@ -399,6 +418,7 @@ export class EventHub {
     log(`event ${line}`);
     if (e.kind === "room") {
       const info = e.data as { mapId?: string; status: string };
+      this.roomNow = { mapId: info.mapId ?? null, status: info.status, at: Date.now() };
       if (info.status === "saved" && info.mapId) {
         world.adoptUnsaved(info.mapId, store.readPlaces, store.writePlaces);
         const adopted = frames.adopt(info.mapId, this.session).filter((m) => m.key && !m.fused);
@@ -594,6 +614,136 @@ export class EventHub {
     ].join("\n");
   }
 
+  private reflectJob(name: string): string {
+    return `Reflect for ${name} (use exactly this name in every call). Call soul_review with character "${name}". Think about what it adds up to, then: (1) call reflect with 1–3 new insights, only ones the record clearly supports (something the user said or did more than once, a real preference, a pattern); don't read psychology into one short exchange, don't build on dreams (they're imagination), and add nothing rather than guess; don't repeat existing insights; (2) call relate if the relationship moved (small closeness/trust steps, likes, dislikes, an inside joke, a treasured moment); (3) if her life plan should change, call update_life. Result line: "${name} reflected: <one line>".`;
+  }
+
+  // MARK: Background jobs and the rooms view
+
+  private roomNow: { mapId: string | null; status: string; at: number } = { mapId: null, status: "unknown", at: 0 };
+  private lastLocate = 0;
+  private locateMap: string | null | undefined;
+  private lastJoinScan = 0;
+
+  /// Keeps the helpers' queue full: where she is (every 2 min, or when the
+  /// room changes), rooms with pictures nobody studied, rooms that may be
+  /// the same room. Reflection is queued by reflectionBrief.
+  private keepJobs(): void {
+    try {
+      jobs.reap();
+      if (jobs.getTarget() === 0) return;
+      const now = Date.now();
+      const mapId = (this.body.scene?.mapId as string | null) ?? null;
+      if (this.present() && (mapId !== this.locateMap || now - this.lastLocate > 120_000) && !jobs.has("locate")) {
+        this.lastLocate = now; this.locateMap = mapId;
+        const recent = frames.all().filter((m) => m.mapId === mapId).slice(-12);
+        const pics = [recent.at(-1), recent.at(-6)].filter(Boolean) as frames.FrameMeta[];
+        const images = pics.map((m) => frames.jpeg(m)).filter(Boolean) as string[];
+        jobs.add({ kind: "locate", key: "locate", title: "where is she?", brief: this.locateBrief(mapId, pics), images });
+      }
+      // Rooms with pictures nobody has studied closely.
+      for (const id of new Set(frames.all().filter((m) => m.mapId).map((m) => groups.canonical(m.mapId!).id))) {
+        if (jobs.has(`study:${id}`)) continue;
+        const group = new Set(groups.members(id).map((m) => m.mapId));
+        const fresh = frames.all().filter((m) => m.key && !m.studied && m.mapId && group.has(m.mapId));
+        if (fresh.length < 4) continue;
+        const picks = frames.varied(fresh.slice(-200), 5);
+        const images = picks.map((m) => frames.jpeg(m)).filter(Boolean) as string[];
+        if (images.length < picks.length) { frames.mark(picks, "studied"); continue; }
+        jobs.add({ kind: "study", key: `study:${id}`, title: `study ${world.readRooms()[id]?.name || "a room"}`, brief: this.studyBrief(id, picks), images, onTake: () => frames.mark(picks, "studied") });
+      }
+      // Rooms that may be the same room (re-scored every 2 minutes).
+      if (now - this.lastJoinScan > 120_000) {
+        this.lastJoinScan = now;
+        for (const p of roomjoin.refresh().slice(0, 2)) {
+          const key = `join:${p.a}|${p.b}`;
+          if (jobs.has(key)) continue;
+          const pick = (id: string) => frames.varied(frames.all().filter((m) => m.key && m.mapId === id).slice(-100), 2);
+          const pa = pick(p.a), pb = pick(p.b);
+          const images = [...pa, ...pb].map((m) => frames.jpeg(m)).filter(Boolean) as string[];
+          jobs.add({ kind: "join", key, title: `same room? ${this.roomLabel(p.a)} / ${this.roomLabel(p.b)}`, brief: this.joinBrief(p, pa.length, pb.length), images, onTake: () => roomjoin.mark(p.a, p.b, "asked") });
+        }
+      }
+    } catch (e) { log(`jobs: ${(e as Error).message}`); }
+  }
+
+  private roomLabel(mapId: string | null): string {
+    if (!mapId) return "an unsaved room";
+    const c = groups.canonical(mapId).id;
+    const r = world.readRooms()[c] ?? world.readRooms()[mapId];
+    return r?.name ? `"${r.name}" (map ${mapId.slice(0, 8)})` : `unnamed map ${mapId.slice(0, 8)}`;
+  }
+
+  private roomsKnown(): string {
+    const rooms = world.readRooms();
+    return Object.entries(rooms).filter(([id]) => groups.isCanonical(id)).map(([id, r]) => {
+      const things = Object.keys(world.readThings(id)).slice(0, 12);
+      const joined = groups.members(id).length - 1;
+      return `- ${r.name || "unnamed"} (map ${id})${joined ? ` [joined with ${joined} other map${joined > 1 ? "s" : ""}]` : ""}${r.description ? `: ${r.description}` : ""}${things.length ? `. Things: ${things.join(", ")}` : ""}`;
+    }).join("\n") || "(none yet)";
+  }
+
+  /// Her position in words: the nearest things and places she knows.
+  private nearWords(mapId: string | null, p: { x: number; z: number }): string {
+    if (!mapId) return "";
+    const spots = [...Object.entries(world.readThings(mapId)).map(([n, t]) => ({ n, x: t.x, z: t.z })), ...Object.entries(store.readPlaces(mapId)).map(([n, q]) => ({ n, x: q.x, z: q.z }))]
+      .map((s) => ({ ...s, d: Math.hypot(s.x - p.x, s.z - p.z) })).sort((a, b) => a.d - b.d).slice(0, 3);
+    return spots.map((s) => `${s.d.toFixed(1)} m from the ${s.n}`).join(", ");
+  }
+
+  private locateBrief(mapId: string | null, pics: frames.FrameMeta[]): string {
+    const scene = this.body.scene;
+    const u = (scene?.user ?? {}) as Record<string, number>;
+    const chars = (scene?.characters ?? []).map((c) => `${c.id} ${c.name} at x ${c.x.toFixed(1)}, z ${c.z.toFixed(1)}${this.nearWords(mapId, c) ? ` (${this.nearWords(mapId, c)})` : ""}`);
+    return [
+      `Work out where she is right now, like a person walking into a room would. ${pics.length ? `The ${pics.length} attached pictures are what the phone's camera saw in the last seconds (newest first).` : "No camera pictures yet: use what you know."}`,
+      `The phone says: map ${mapId ?? "none (not saved yet)"}, ${this.roomNow.mapId === mapId ? `status "${this.roomNow.status}"` : "no recognition status"}${mapId ? `; this map is ${this.roomLabel(mapId)}` : ""}.`,
+      `Characters: ${chars.join("; ") || "none placed"}. The user (the phone) is at x ${(u.x ?? 0).toFixed(1)}, z ${(u.z ?? 0).toFixed(1)}${this.nearWords(mapId, { x: u.x ?? 0, z: u.z ?? 0 }) ? ` (${this.nearWords(mapId, { x: u.x ?? 0, z: u.z ?? 0 })})` : ""}.`,
+      `Rooms she knows:\n${this.roomsKnown()}`,
+      `Then call room_belief once: room (the room's name: an existing one if this is a room she knows, else a fitting new name), same_as (the map id of a known room if this map looks like it but isn't joined with it yet), confidence 0–1, where (where she is in the room in plain words, by the things around her), user (where the user is), reasoning (2–4 plain sentences: what in the pictures and map made you think so, and what doesn't fit). Only what you can see or know; say when you're unsure. If this map has no name yet and you're fairly sure (0.7+), also call name_room with that name and a one-sentence description. Result line: "<room>, <confidence>".`,
+    ].join("\n");
+  }
+
+  private studyBrief(id: string, picks: frames.FrameMeta[]): string {
+    const known = Object.keys(world.readThings(id));
+    return [
+      `Study ${this.roomLabel(id)}: ${picks.length} camera-memory pictures nobody has looked at closely are attached, in this order:`,
+      ...picks.map((m, i) => { const c = frames.camera(m); return `${i + 1}. frame ${m.t}: ${new Date(m.t).toLocaleString("en-GB", { weekday: "short", hour: "2-digit", minute: "2-digit" })}, camera at x ${c.x.toFixed(1)}, z ${c.z.toFixed(1)}`; }),
+      `Add to what she knows of this place, only from what is clearly visible: note_from_frame for specific things (frame id, u from the left, v from the top; kind "door" or "window" for those), name_room with a short description if it has none or you can describe it better. Skip what she already knows${known.length ? ` (${known.slice(0, 30).join(", ")})` : ""}. Nothing to add is fine. Result line: what you added.`,
+    ].join("\n");
+  }
+
+  private joinBrief(p: roomjoin.Pair, na: number, nb: number): string {
+    return [
+      `Are these the same room? The phone saved two maps: A = ${this.roomLabel(p.a)} and B = ${this.roomLabel(p.b)}. Pictures 1–${na} are from A, ${na + 1}–${na + nb} from B.`,
+      p.score < 0 ? `Their maps are too small to compare (saved before camera memory, or barely scanned): judge by the pictures${na + nb ? "" : " (none kept) and names"} only, and only join if you're confident.`
+        : `Their LiDAR maps line up with a score of ${p.score} (how well walls and furniture land on each other both ways, above chance, when best turned and shifted; 0.5+ is a strong match, under 0.3 weak).`,
+      `Rooms she knows:\n${this.roomsKnown()}`,
+      `Compare what you see: furniture, windows, doors, walls, floor, light. If clearly the same room, call join_rooms with a "${p.a}", b "${p.b}" and why. If clearly different rooms, call keep_rooms_apart with both and why. If you can't tell, do neither. Result line: your decision.`,
+    ].join("\n");
+  }
+
+  /// Live state for the galaxy's rooms view.
+  private live() {
+    const scene = this.body.scene;
+    const mapId = (scene?.mapId as string | null) ?? null;
+    const canon = mapId ? groups.canonical(mapId) : null;
+    const toCanon = (p: { x: number; z: number; yaw?: number }) => {
+      if (!canon?.xf) return p;
+      const q = groups.apply(canon.xf, p);
+      return { ...q, ...(p.yaw !== undefined ? { yaw: groups.applyYaw(canon.xf, p.yaw) } : {}) };
+    };
+    const u = (scene?.user ?? {}) as Record<string, number>;
+    return {
+      connected: this.body.connected, present: this.present(), mapId, room: canon?.id ?? null, roomName: canon ? world.readRooms()[canon.id]?.name ?? "" : "",
+      recognition: this.roomNow,
+      characters: (scene?.characters ?? []).map((c) => ({ id: c.id, name: soul.readProfile(c.name)?.name ?? c.name, ...toCanon({ x: c.x, z: c.z, yaw: c.yaw }), near: this.nearWords(mapId, c), doing: this.life?.current(c.id)?.note ?? "" })),
+      user: scene ? { ...toCanon({ x: u.x ?? 0, z: u.z ?? 0, yaw: u.yaw ?? 0 }), near: this.nearWords(mapId, { x: u.x ?? 0, z: u.z ?? 0 }) } : null,
+      beliefs: beliefs.recent(10),
+      jobs: jobs.status(),
+    };
+  }
+
   /// Reflection is due: the main loop hands it to a background helper (a ready brief).
   private reflectionBrief(): string {
     const now = Date.now();
@@ -602,6 +752,14 @@ export class EventHub {
       const b = soul.readBond(c.name);
       const due = b.pending >= (this.awayFor() !== null ? 8 : 20) && now - b.askedReflect > 30 * 60_000;
       if (!due) continue;
+      if (jobs.getTarget() > 0) {
+        if (!jobs.has(`reflect:${c.name}`)) {
+          b.askedReflect = now;
+          soul.writeBond(c.name, b);
+          jobs.add({ kind: "reflect", key: `reflect:${c.name}`, title: `${c.name} reflects`, brief: this.reflectJob(c.name) });
+        }
+        continue;
+      }
       b.askedReflect = now;
       soul.writeBond(c.name, b);
       lines.push(`Reflection is due for ${c.name}: ${b.pending} new memories, dreams and conversations. Don't do it yourself: start a background helper now (Agent tool, run_in_background, model "sonnet") with this brief, then carry on with this wake:\n> You are ${c.name}'s reflection, working quietly in the background for the Drillin AIR soul. Call soul_review with character "${c.name}" (use exactly this name in every call). Think about what it adds up to, then: (1) call reflect with 1–3 new insights, only ones the record clearly supports (something the user said or did more than once, a real preference, a pattern); don't read psychology into one short exchange, don't build on dreams (they're imagination), and add nothing rather than guess; don't repeat existing insights; (2) call relate if the relationship moved (small closeness/trust steps, likes, dislikes, an inside joke, a treasured moment); (3) if her life plan should change, call update_life. Never call wait_for_events, say, run_behavior, play_animation or live. Finish with report: "${c.name} reflected: <one line>".`);
@@ -614,6 +772,7 @@ export class EventHub {
   /// camera memory of the last room instead: a few varied frames she hasn't
   /// looked at closely, to learn the place (things, doors, what the room is).
   private studyWake(mapId: string | null): string | null {
+    if (jobs.getTarget() > 0) return null; // helpers study rooms in the background
     if (this.studiesThisAway >= Number(process.env.BRAIN_STUDIES_PER_AWAY ?? 3) || this.dreamsThisAway % 2 === 1) return null;
     const fresh = frames.all().filter((m) => m.key && !m.studied && (mapId ? m.mapId === mapId : true));
     if (fresh.length < 3) return null;
@@ -678,7 +837,7 @@ export class EventHub {
     const scene = this.body.scene;
     const moves = Object.keys(store.behaviorFiles()).filter((n) => n.startsWith("anim_")).map((n) => n.slice(5));
     const places = Object.entries(store.readPlaces(scene?.mapId as string | null));
-    const lines = [`Free time (the user hasn't interacted for ${quiet}; that's normal, they may be busy or out of view). Her own life goes on: write her next minute or two with \`live\`.`];
+    const lines = [`Free time (the user hasn't interacted for ${quiet}; that's normal, they may be busy or out of view). Her own life goes on: write her next stretch with \`live\`: 8–16 steps, always busy, short pauses (2–5 s), plenty of moves from her library.`];
     for (const c of scene?.characters ?? []) {
       const e = this.life?.energy(c.id);
       const near = (p: { x: number; z: number }) => Math.hypot(p.x - c.x, p.z - c.z);
@@ -717,6 +876,12 @@ export class EventHub {
     const parts: string[] = [`Time: ${new Date().toString()} — ${part} (${hint}).${routine ? ` ${routine}` : ""}`];
     const brief = this.reflectionBrief();
     if (brief) events = [...events, brief];
+    const more = jobs.needed();
+    if (more > 0) {
+      jobs.requestedNow(more);
+      const st = jobs.status();
+      events = [...events, `Background helpers: ${st.workers.length} of ${st.target} running. Start ${more} more now, all in one message: ${more} Agent tool call${more > 1 ? "s" : ""} with run_in_background true, model "sonnet", description "soul helper", each with exactly this prompt (then carry on with this wake; never wait for them):\n> ${jobs.WORKER_BRIEF}`];
+    }
     if (this.returnGap) {
       const hours = this.returnGap / 3_600_000;
       parts.push(

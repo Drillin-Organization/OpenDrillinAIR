@@ -176,6 +176,10 @@ export function jpeg(m: FrameMeta): string | null {
   try { return fs.readFileSync(fileOf(m, "jpg")).toString("base64"); } catch { return null; }
 }
 
+export function depthGrid(m: FrameMeta): Uint16Array | null {
+  return depthOf(m);
+}
+
 function depthOf(m: FrameMeta): Uint16Array | null {
   if (!m.depth) return null;
   try {

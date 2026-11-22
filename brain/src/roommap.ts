@@ -125,3 +125,63 @@ export function fill(phone: Grid, mapId: string | null | undefined): { grid: Gri
 export function reset(): void {
   cache.clear(); dirty.clear();
 }
+
+// MARK: The phone's own LiDAR scan, kept per room for browsing
+
+const phoneFile = (mapId: string) => path.join(DIR, `${mapId.replace(/[^A-Za-z0-9_-]/g, "")}.phone.json`);
+
+/// The latest scan the phone reported for this room (saved now and then while it's there).
+export function savePhone(mapId: string, g: Grid): void {
+  fs.mkdirSync(DIR, { recursive: true });
+  fs.writeFileSync(phoneFile(mapId), JSON.stringify({ originX: g.originX, originZ: g.originZ, cell: g.cell, width: g.width, height: g.height, rows: g.rows, at: Date.now() }));
+}
+
+export function readPhone(mapId: string): (Grid & { at: number }) | null {
+  try { return JSON.parse(fs.readFileSync(phoneFile(mapId), "utf8")); } catch { return null; }
+}
+
+/// Every map id with anything kept (scan or camera memory).
+export function ids(): string[] {
+  if (!fs.existsSync(DIR)) return [];
+  return [...new Set(fs.readdirSync(DIR).filter((f) => f.endsWith(".json")).map((f) => f.replace(/\.phone\.json$|\.json$/, "")))];
+}
+
+/// The room as one grid on 10 cm cells: the phone's scan ('#' blocked, '.'
+/// free) with what only camera memory knows ('b' blocked, 'f' free).
+export function combined(mapId: string): Grid | null {
+  const phone = readPhone(mapId);
+  const mem = read(mapId);
+  const memKeys = Object.keys(mem.cells);
+  if (!phone && !memKeys.length) return null;
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  if (phone) {
+    x0 = Math.floor(phone.originX / CELL); z0 = Math.floor(phone.originZ / CELL);
+    x1 = Math.ceil((phone.originX + phone.width * phone.cell) / CELL); z1 = Math.ceil((phone.originZ + phone.height * phone.cell) / CELL);
+  }
+  for (const k of memKeys) {
+    const [gx, gz] = k.split(",").map(Number);
+    x0 = Math.min(x0, gx); x1 = Math.max(x1, gx); z0 = Math.min(z0, gz); z1 = Math.max(z1, gz);
+  }
+  if (x1 - x0 > 600 || z1 - z0 > 600) { // keep it to 60 m around
+    x1 = Math.min(x1, x0 + 600); z1 = Math.min(z1, z0 + 600);
+  }
+  const rows: string[] = [];
+  for (let gz = z0; gz <= z1; gz++) {
+    let r = "";
+    for (let gx = x0; gx <= x1; gx++) {
+      let ch = " ";
+      if (phone) {
+        const px = Math.floor(((gx + 0.5) * CELL - phone.originX) / phone.cell), pz = Math.floor(((gz + 0.5) * CELL - phone.originZ) / phone.cell);
+        const p = pz >= 0 && pz < phone.height && px >= 0 && px < phone.width ? phone.rows[pz][px] : " ";
+        if (p === "#" || p === ".") ch = p;
+      }
+      if (ch === " ") {
+        const s = state(mem.cells[`${gx},${gz}`]);
+        ch = s === "#" ? "b" : s === "." ? "f" : " ";
+      }
+      r += ch;
+    }
+    rows.push(r);
+  }
+  return { originX: x0 * CELL, originZ: z0 * CELL, cell: CELL, width: x1 - x0 + 1, height: z1 - z0 + 1, rows };
+}

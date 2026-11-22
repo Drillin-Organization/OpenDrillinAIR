@@ -25,7 +25,10 @@ export type Step =
   | { do: "gaze"; seconds?: number; x?: number; z?: number; to?: string; place?: string; thing?: string }
   | { do: "wait"; seconds: number };
 
-type Plan = { id: string; steps: Step[]; note: string; i: number; cancelled: boolean; done: string[] };
+type Plan = { id: string; steps: Step[]; note: string; i: number; cancelled: boolean; done: string[]; asked?: boolean; next?: { steps: Step[]; note: string } };
+
+/// Longest pause a plan step may hold her still (she's always up to something).
+const MAX_IDLE_S = Number(process.env.BRAIN_MAX_IDLE_S ?? 8);
 
 /// Where a walk or face goes: a marked thing or named place (by name, in
 /// this room), the user or a character, or x/z. Walking to a thing stops
@@ -45,6 +48,39 @@ export function namedTarget(body: Body, id: string | null, s: { x?: number; z?: 
     return { x: at.x - (dx / d) * keep, z: at.z - (dz / d) * keep };
   }
   return { x: at.x, z: at.z };
+}
+
+/// A seat to sit on, with its surface height: a marked thing (its measured
+/// height), a seat plane by id ('p7'), or the seat plane nearest a place,
+/// a spot or her.
+export function findSeat(body: Body, id: string, s: { x?: number; z?: number; place?: string; thing?: string; seat?: string }): { x: number; z: number; y: number } | null {
+  const scene = body.scene;
+  const planes = (scene?.planes ?? []) as Array<Record<string, any>>;
+  if (s.thing) {
+    const t = world.readThings(scene?.mapId as string | null)[s.thing];
+    if (t) return { x: t.x, z: t.z, y: t.y };
+  }
+  if (s.seat) {
+    const p = planes.find((q) => q.id === s.seat);
+    if (p && typeof p.y === "number") return { x: p.x, z: p.z, y: p.y };
+  }
+  const c = scene?.characters.find((x) => x.id === id);
+  const at = namedTarget(body, null, s, false) as { x?: number; z?: number } | null;
+  const from = at && typeof at.x === "number" ? { x: at.x, z: at.z! } : c ? { x: c.x, z: c.z } : null;
+  if (!from) return null;
+  const seats = planes.filter((p) => ["seat", "bed"].includes(p.kind) && typeof p.y === "number");
+  const best = seats.map((p) => ({ p, d: Math.hypot(p.x - from.x, p.z - from.z) })).sort((a, b) => a.d - b.d)[0];
+  if (!best || best.d > 2.5) return null;
+  return { x: best.p.x, z: best.p.z, y: best.p.y };
+}
+
+/// sit_on needs the seat's height: fill it in from whatever the mind gave
+/// (thing, place, seat plane id, x/z). Null when no seat is there.
+export function sitOnArgs(body: Body, id: string, args: Record<string, any>): Record<string, any> | null {
+  if (typeof args.x === "number" && typeof args.z === "number" && typeof args.y === "number") return args;
+  const { thing, place, seat, x, z, ...rest } = args;
+  const found = findSeat(body, id, { thing, place, seat, x, z });
+  return found ? { ...rest, ...found } : null;
 }
 
 export class Life {
@@ -123,12 +159,21 @@ export class Life {
     return { level: Math.round(level * 100) / 100, label };
   }
 
-  start(id: string, steps: Step[], note: string): void {
+  /// Starts a plan, or, when her current plan is nearly done and asked for
+  /// what comes next, queues it to follow on without a pause.
+  start(id: string, steps: Step[], note: string): "started" | "queued" {
+    const current = this.plans.get(id);
+    if (current && current.asked && !current.cancelled) {
+      current.next = { steps: steps.slice(0, 24), note };
+      emitActivity({ kind: "tool", area: "soul", node: `plan:${id}`, label: `${id} next: ${note}`, grew: true });
+      return "queued";
+    }
     this.cancel(id, "replaced by a new plan");
     const plan: Plan = { id, steps: steps.slice(0, 24), note, i: 0, cancelled: false, done: [] };
     this.plans.set(id, plan);
     emitActivity({ kind: "tool", area: "soul", node: `plan:${id}`, label: `${id} plans: ${note}`, grew: true });
     void this.run(plan);
+    return "started";
   }
 
   /// Ends her plan (the user did something, or the mind took over).
@@ -148,6 +193,12 @@ export class Life {
     const { id } = plan;
     for (; plan.i < plan.steps.length && !plan.cancelled; plan.i++) {
       const step = plan.steps[plan.i];
+      // Two steps left: ask for what comes next now, so it follows on with no gap.
+      if (!plan.asked && plan.steps.length - plan.i <= 2) {
+        plan.asked = true;
+        const left = plan.steps.slice(plan.i).map((st) => { const r = st as Record<string, unknown>; const arg = r.name ?? r.thing ?? r.place; return st.do + (arg ? ` ${String(arg)}` : ""); }).join(", ");
+        this.wake(`Free time: ${id}'s plan ("${plan.note}") is nearly done (left: ${left}). Write what she does right after with \`live\` now: it follows on without a pause. Lately: ${this.history(id)}.`);
+      }
       try {
         const did = await this.step(id, step, plan);
         if (did && !plan.cancelled) {
@@ -161,6 +212,7 @@ export class Life {
     }
     if (plan.cancelled) return;
     this.plans.delete(id);
+    if (plan.next) { this.start(id, plan.next.steps, plan.next.note); return; }
     await this.body.command("status", { character: id, text: "" });
     this.wake(`Free time: ${id}'s plan ("${plan.note}") is done. She did: ${plan.done.join("; ") || "nothing (every step failed)"}. Decide her next stretch of life.`);
   }
@@ -183,8 +235,9 @@ export class Life {
       case "idle": {
         const r = await this.body.command("run", { character: id, behavior: "idle", args: { ...(s.look !== undefined ? { look: s.look } : {}), ...(s.fidgets ? { fidgets: s.fidgets } : {}) } });
         if (!r.ok) return null;
-        await this.sleep(Math.min(120, Math.max(2, s.seconds ?? 8)) * 1000, plan);
-        return `rested and looked around (${Math.round(s.seconds ?? 8)} s)`;
+        const secs = Math.min(MAX_IDLE_S, Math.max(1, s.seconds ?? 4));
+        await this.sleep(secs * 1000, plan);
+        return `paused and looked around (${Math.round(secs)} s)`;
       }
       case "play": {
         // Her own learned moves, else the motion-capture library.
@@ -198,9 +251,11 @@ export class Life {
         return `did ${s.name.replace(/_/g, " ")}${s.times && s.times > 1 ? ` ×${s.times}` : ""}`;
       }
       case "behavior": {
-        const r = await this.body.command("run", { character: id, behavior: s.name, args: s.args ?? {} });
+        const args = s.name === "sit_on" ? sitOnArgs(this.body, id, s.args ?? {}) : s.args ?? {};
+        if (!args) { this.note(id, "looked for a seat but found none"); return null; }
+        const r = await this.body.command("run", { character: id, behavior: s.name, args });
         if (!r.ok) { this.note(id, `couldn't ${s.name} (${r.error})`); return null; }
-        await this.until(id, [s.name], Math.min(180, s.seconds ?? 20) * 1000, plan);
+        await this.until(id, [s.name], Math.min(90, s.seconds ?? 20) * 1000, plan);
         return s.name.replace(/_/g, " ");
       }
       case "think":
@@ -222,8 +277,9 @@ export class Life {
         if (!seat) { this.note(id, `looked for a seat at ${this.describe(s)} but found none`); return null; }
         const r = await this.body.command("run", { character: id, behavior: "sit_on", args: seat });
         if (!r.ok) { this.note(id, `couldn't sit at ${this.describe(s)} (${r.error})`); return null; }
-        await this.sleep(Math.min(300, Math.max(5, s.seconds ?? 25)) * 1000, plan);
-        return `sat on ${s.thing ?? s.place ?? "a seat"} for ${Math.round(s.seconds ?? 25)} s`;
+        const secs = Math.min(90, Math.max(5, s.seconds ?? 25));
+        await this.sleep(secs * 1000, plan);
+        return `sat on ${s.thing ?? s.place ?? "a seat"} for ${Math.round(secs)} s`;
       }
       case "gaze": {
         // Look at something (or the user) while carrying on as she is.
@@ -236,7 +292,7 @@ export class Life {
         return `looked at ${this.describe(s)} for ${Math.round(secs)} s`;
       }
       case "wait":
-        await this.sleep(Math.min(120, Math.max(1, s.seconds)) * 1000, plan);
+        await this.sleep(Math.min(MAX_IDLE_S, Math.max(0.5, s.seconds ?? 2)) * 1000, plan);
         return null;
     }
   }
@@ -244,19 +300,7 @@ export class Life {
   /// A seat to sit on: a marked thing (its measured height), or the seat
   /// plane nearest the given spot (else nearest her).
   private seat(id: string, s: { x?: number; z?: number; place?: string; thing?: string }): { x: number; z: number; y: number } | null {
-    const scene = this.body.scene;
-    if (s.thing) {
-      const t = world.readThings(scene?.mapId as string | null)[s.thing];
-      if (t) return { x: t.x, z: t.z, y: t.y };
-    }
-    const c = scene?.characters.find((x) => x.id === id);
-    const at = this.target(s) as { x?: number; z?: number } | null;
-    const from = at && typeof at.x === "number" ? { x: at.x, z: at.z! } : c ? { x: c.x, z: c.z } : null;
-    if (!from) return null;
-    const seats = ((scene?.planes ?? []) as Array<Record<string, any>>).filter((p) => ["seat", "bed"].includes(p.kind) || (p.kind === "table" && false));
-    const best = seats.map((p) => ({ p, d: Math.hypot(p.x - from.x, p.z - from.z) })).sort((a, b) => a.d - b.d)[0];
-    if (!best || best.d > 2.5) return null;
-    return { x: best.p.x, z: best.p.z, y: best.p.y };
+    return findSeat(this.body, id, s);
   }
 
   private target(s: { x?: number; z?: number; to?: string; place?: string; thing?: string }): Record<string, unknown> | null {

@@ -40,12 +40,13 @@ cd OpenDrillinAIR
 
 The phone finds the brain by itself through Bonjour. If it doesn't, enter the computer's address in Settings → Brain address, for example `192.168.1.20:8787`.
 
-The mind’s galaxy (pictured above) is at **http://localhost:8788** on the computer. It shows every organ, memory, dream, behaviour, tool and move, and lights up what she's doing right now.
+The mind’s galaxy (pictured above) is at **http://localhost:8788** on the computer. It shows every organ, memory, dream, behaviour, tool and move, and lights up what she's doing right now. Its **Rooms** button browses every room she remembers: the LiDAR map with what camera memory filled in, the things and places she knows there, where the camera has been, and every kept picture with its depth.
 
 ### While she lives
 
 - **Direct her** by typing in the chat: "make her shyer", "teach her to moonwalk", "rewrite her walk".
 - **She keeps going without the phone.** When the phone is away she daydreams about the world she has seen, then picks up again when it reconnects.
+- **Background helpers.** Up to 10 Claude helpers (5 by default; phone Settings › Background helpers) work in parallel in the same Claude Code chat: working out which room she's in and where (shown live in the galaxy's Rooms view), studying rooms from camera memory, joining rooms the phone saved twice (their maps are lined up automatically and a helper confirms from the pictures), reflection, and slow jobs like learning a move. More helpers use more of your Claude plan.
 - **Camera memory.** The phone sends a plain camera picture every second (Settings › Camera memory; Off, 0.5–10 s) with its position and a little LiDAR depth. The brain keeps the last 30 minutes in full and only key frames after that, up to 2 GB (`BRAIN_FRAMES_FULL_MIN`, `BRAIN_FRAMES_GB`). The mind looks back with `recall_frames` when it wonders what happened; the depth fills in a lasting map of each room; and while dreaming she studies a few pictures to learn the place. Pictures never leave your computer.
 - **Stopping:** she stops only when you stop Claude in that chat (Esc, or close the chat).
 - **Start a fresh chat with `/soul` each session.** Her memories, personality, relationship and moves are stored in the brain, so nothing is lost, and a short chat answers faster.

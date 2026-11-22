@@ -15,6 +15,7 @@ import * as store from "./store.js";
 import type { Voice } from "./voice.js";
 import type { EventHub } from "./events.js";
 import * as world from "./world.js";
+import { roomsRoute } from "./rooms-api.js";
 
 /// Live parts of the brain the page reads (set by main.ts and tools.ts).
 export const wiring: { life?: Life; ears?: Ears; voice?: Voice; hub?: EventHub } = {};
@@ -83,6 +84,8 @@ export function toolArea(name: string, input: Record<string, any>): { area: Area
     case "dream": return { area: "soul", node: input.character ? `dreams:${input.character}` : undefined };
     case "create_soul": case "feel": return { area: "soul", node: input.character ? `inner:${input.character}` : undefined };
     case "mark_thing": case "note_from_frame": return { area: "space", node: "space:things" };
+    case "next_job": case "job_done": case "queue_job": return { area: "helpers", node: input.worker ? `worker:${input.worker}` : "helpers:queue" };
+    case "room_belief": case "join_rooms": case "keep_rooms_apart": return { area: "space", node: "space:rooms" };
     case "recall_frames": return { area: "senses", node: "sense:camera" };
     case "get_scene": return { area: "senses", node: "sense:scene" };
     case "name_room": return { area: "space", node: "space:rooms" };
@@ -317,7 +320,7 @@ export function startUI(body: Body, port: number, log: (l: string) => void): voi
         clearInterval(ping);
         activity.off("activity", send);
       });
-    } else {
+    } else if (!roomsRoute(url, res)) {
       res.writeHead(404).end();
     }
   });

@@ -81,7 +81,7 @@ export function suggest(energy: number, avoid: string, n = 8): LibraryMove[] {
   // when the moment really calls for it, but is never suggested.
   // Gestures meant for someone (wave, laugh, bow, point) are for talking
   // with the user, not for doing alone: she finds those with find_moves.
-  const calm = /\b(wait(ing)?|look(ing)? around|stretch|yawn|think|scratch|hair|hands? on hips|arms? crossed|cross(ed)? arms|lean|relax|rest(ing)?|sigh|bored|sway|tap(ping)? (her |the )?foot|standing still|breath|shift(ing)? weight|idle)\b/i;
+  const calm = /\b(wait(ing)?|look(ing)? (around|up|down|at|for)|stretch|yawn|think|scratch|hair|hands? on hips|arms? crossed|cross(ed)? arms|lean|relax|rest(ing)?|sigh|bored|sway|tap(ping)? (her |the )?foot|standing still|breath|shift(ing)? weight|idle|shrug|nod|check(ing)?|adjust|fix(ing)?|smooth|brush(ing)? off|rub(bing)?|touch(ing)?|play(ing)? with|fidget|kneel|crouch|peek|inspect|examin|search|wonder|curious|happy|content|hum|clap|snap|bounce|walk(ing)? (around|in place)|pace|pacing|turn(ing)? around)\b/i;
   const sitting = /\b(sit(ting)?|sits) (down|on the floor|cross|and)|\bsitting\b|\bsit down\b/i;
   const dancey = /^(dance|dancing)\b(?!.*(arabesque|pirouette|jete|attitude|plie|calibration|pose))/i;
   const odd = /human subject|flashlight|strong man|bus|old man|macho|dinosaur|cat wait|cartwheel|spin|tiptoe|reach for|vignette|traffic|arrow|shoot|smash|angr|crying|drunk|zombie|monster|ghost|chicken|animal|calibration|sword|fight|punch|kick|saw|bolt|hammer|sweep|mop|clean|wash|toss|throw|catch|lift|carry|phone|mug|coffee|headphone|\bA\b|\bB\b|partner|part (?!1 of)\d+/i;
@@ -90,7 +90,7 @@ export function suggest(energy: number, avoid: string, n = 8): LibraryMove[] {
     if (odd.test(d) || m.seconds > 12) return 0;
     if (dancey.test(d)) return energy > 0.72 ? 2 : 0;
     if (sitting.test(d)) return energy < 0.45 ? 4 : 1;
-    return calm.test(d) ? 3 : 0;
+    return calm.test(d) ? 3 : m.tags.some((t) => t === "everyday" || t === "gesture" || t === "idle") ? 2 : 0;
   };
   const pool = library().filter((m) => !avoid.includes(m.name.replace(/_/g, " ")) && fits(m) > 0);
   const pick: LibraryMove[] = [];

@@ -1,6 +1,7 @@
 // The phone, as the mind sees it: one WebSocket connection at a time.
 // Commands go down and resolve when the phone replies; events and scene
 // updates come up.
+import * as jobs from "./jobs.js";
 import { EventEmitter } from "node:events";
 import type { WebSocket } from "ws";
 
@@ -57,11 +58,13 @@ export class Body extends EventEmitter {
           this.device = String(msg.device ?? "phone");
           this.voicePref = String(msg.voice ?? "");
           this.earsPref = String(msg.ears ?? "");
+          if (typeof msg.helpers === "number") jobs.setTarget(msg.helpers);
           this.emit("hello", msg);
           break;
         case "prefs":
           if (typeof msg.voice === "string") this.voicePref = msg.voice;
           if (typeof msg.ears === "string") this.earsPref = msg.ears;
+          if (typeof msg.helpers === "number") jobs.setTarget(msg.helpers);
           this.emit("prefs");
           break;
         case "talking":

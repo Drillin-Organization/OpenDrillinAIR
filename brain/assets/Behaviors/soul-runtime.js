@@ -10,6 +10,14 @@
 // `ch` is the character as body.characters() reports it.
 var __behaviors = {};
 var __active = {};   // character id -> { name, state, args }
+// Facing the mind asked her to keep ({hold: true} on face, e.g. "stay turned
+// around"): the phone's turn-to-the-speaker reflex leaves her be. Things she
+// does in place keep it; facing, walking, following or sitting somewhere
+// ends it, and so does stopping her.
+var __held = {};
+var __facingBehaviors = { face: 1, walk: 1, walk_path: 1, follow_user: 1, sit_on: 1 };
+function __isHeld(id) { return !!__held[id]; }
+function __release(id) { delete __held[id]; }
 
 function behavior(name, def) { __behaviors[name] = def; }
 
@@ -37,6 +45,7 @@ function __run(id, name, args) {
   var ch = __char(id);
   if (!ch) throw new Error("no character " + id);
   __stop(id, "replaced by " + name);
+  if (__facingBehaviors[name]) { if (args && args.hold) __held[id] = true; else delete __held[id]; }
   var state = {};
   __active[id] = { name: name, state: state, args: args || {} };
   if (def.start) {

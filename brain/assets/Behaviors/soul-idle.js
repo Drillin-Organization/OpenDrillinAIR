@@ -1,4 +1,4 @@
-// idle v3: resting while the mind is on: breathing, slow weight shifts, small
+// idle v4: resting while the mind is on: breathing, slow weight shifts, small
 // arm movement. Her gaze (the user, people, glances around) is the native
 // attention layer's; args.look holds it on a direction.
 animation("idle_stand", {
@@ -47,9 +47,10 @@ behavior("idle", {
       s.from = body.currentPose(ch.id) || s.from;
       s.t = 0;
     }
-    s.fidgetIn = (s.fidgetIn == null ? 12 + Math.random() * 20 : s.fidgetIn) - dt;
+    // She's never still for long: a small movement every few seconds.
+    s.fidgetIn = (s.fidgetIn == null ? 1.5 + Math.random() * 2.5 : s.fidgetIn) - dt;
     if (s.fidgetIn <= 0) {
-      s.fidgetIn = 15 + Math.random() * 25;
+      s.fidgetIn = 3 + Math.random() * 4;
       if (!s.pool) s.pool = body.moveNames(s.args && s.args.fidgets ? s.args.fidgets : this.fidgets);
       if (s.pool.length) {
         var name = s.pool[Math.floor(Math.random() * s.pool.length)];

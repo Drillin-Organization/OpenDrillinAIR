@@ -13,13 +13,17 @@ import * as store from "./store.js";
 import { characterNode, emitActivity, toolArea, toolNames, wiring } from "./ui.js";
 import { Voice } from "./voice.js";
 import type { Ears } from "./ears.js";
-import { Life, namedTarget, type Step } from "./life.js";
+import { Life, namedTarget, sitOnArgs, type Step } from "./life.js";
 import { inLibrary, library, search as searchMoves } from "./moves.js";
 import * as soul from "./soul.js";
 import * as compose from "./compose.js";
 import * as world from "./world.js";
 import * as frames from "./frames.js";
 import * as roommap from "./roommap.js";
+import * as jobs from "./jobs.js";
+import * as beliefs from "./beliefs.js";
+import * as roomjoin from "./roomjoin.js";
+import * as groups from "./groups.js";
 
 /// Tools whose success changes what the mind knows (the galaxy grows).
 const GROWS = new Set(["write_animation", "write_behavior", "revert_behavior", "remember", "update_persona", "update_life", "name_place", "forget_place"]);
@@ -49,6 +53,11 @@ function summary(name: string, input: Record<string, any>): string {
     case "name_room": return `“${input.name}”`;
     case "recall_frames": return [input.seconds_ago !== undefined && `${input.seconds_ago} s ago`, input.at, input.near].filter(Boolean).join(", ") || "lately";
     case "note_from_frame": return (input.things ?? []).map((t: any) => t.name).join(", ");
+    case "next_job": return String(input.worker ?? "");
+    case "job_done": return `${input.worker}: ${String(input.result ?? "").slice(0, 80)}`;
+    case "queue_job": return String(input.title ?? "");
+    case "room_belief": return `${input.room} (${input.confidence}): ${String(input.where ?? "").slice(0, 60)}`;
+    case "join_rooms": case "keep_rooms_apart": return `${String(input.a ?? "").slice(0, 8)} / ${String(input.b ?? "").slice(0, 8)}`;
     case "mark_thing": return (input.things ?? []).map((t: any) => t.name).join(", ") || String(input.name ?? "");
     default: {
       const s = JSON.stringify(input);
@@ -62,7 +71,7 @@ const MIN_VERSIONS = 3;
 
 /// Bumped when tools or instructions change; /soul checks it so a chat never
 /// runs on a stale brain process.
-export const BRAIN_VERSION = 29;
+export const BRAIN_VERSION = 33;
 
 const text = (t: unknown): CallToolResult => ({
   content: [{ type: "text", text: typeof t === "string" ? t : JSON.stringify(t) }],
@@ -152,7 +161,7 @@ export function registerTools(server: McpServer, body: Body, hub: EventHub, voic
 
   tool(
     "run_behavior",
-    "Start a behaviour script on a character (replaces her current one). Built in: walk {thing:'<marked thing>'} | {place:'<named place>'} | {to:'user'} | {to:'<id>'} | {x,z} (by name is best: she stops beside a thing, no coordinates to guess; plans a route around walls and furniture on the LiDAR room map; fails if there is no route); face (same targets); idle (resting; {look: degrees} to look somewhere, + = her left); dance (her own dance until replaced); play {name} (an animation; prefer play_animation). Set notify to be woken when it finishes.",
+    "Start a behaviour script on a character (replaces her current one). Built in: walk {thing:'<marked thing>'} | {place:'<named place>'} | {to:'user'} | {to:'<id>'} | {x,z} (by name is best: she stops beside a thing, no coordinates to guess; plans a route around walls and furniture on the LiDAR room map; fails if there is no route); face (same targets; a face away from the user holds: when the user talks she no longer turns back to them by reflex, until you face her {to:'user'}, walk, sit or stop her; pass hold:false for a passing glance); sit_on {thing|seat:'<plane id>'|place|x,z} (sits properly on a real seat; the brain finds its height); idle (resting; {look: degrees} to look somewhere, + = her left); dance (her own dance until replaced); play {name} (an animation; prefer play_animation). Set notify to be woken when it finishes.",
     {
       character,
       behavior: z.string(),
@@ -170,6 +179,14 @@ export function registerTools(server: McpServer, body: Body, hub: EventHub, voic
           return fail(`No ${thing ? "thing" : "place"} "${thing ?? place}" in this room. Known: ${known.join(", ") || "none yet"}.`);
         }
         args = { ...rest, ...at };
+      }
+      // A turn the mind asks for (away from the user) holds: the phone won't
+      // turn her back to the user when they speak, until she's told otherwise.
+      if (behavior === "face" && args && args.to !== "user" && args.hold === undefined) args = { ...args, hold: true };
+      if (behavior === "sit_on") {
+        const seated = sitOnArgs(body, id, args ?? {});
+        if (!seated) return fail("No seat found there. Give sit_on a marked thing {thing:'sofa'}, a seat plane id from the scene {seat:'p7'}, a named place, or x/z right next to a seat (sofa, chair, bench, bed edge). If the phone hasn't detected the seat as a plane, mark_thing it first.");
+        args = seated;
       }
       life.cancel(id, "the mind took over");
       life.note(id, `${behavior}${args && Object.keys(args).length ? " " + JSON.stringify(args) : ""}`);
@@ -372,6 +389,99 @@ export function registerTools(server: McpServer, body: Body, hub: EventHub, voic
   );
 
   tool(
+    "next_job",
+    "For background helpers only: your next job (waits up to 4 minutes). Returns the job's instructions and pictures, 'no job' (call again), or 'retire' (finish).",
+    { worker: z.string().min(1).describe("Your worker name, the same in every call") },
+    async ({ worker }) => {
+      const r = await jobs.next(worker);
+      if ("retire" in r) return text("Retire now: you've done your share. Finish with one line; a fresh helper takes over.");
+      if ("none" in r) return text("No job right now. Call next_job again.");
+      const j = r.job;
+      return { content: [
+        { type: "text", text: `Job ${j.id} (${j.kind}): ${j.title}\n\n${j.brief}\n\nWhen done, call job_done with worker "${worker}", job "${j.id}" and a one-line result, then next_job again.` },
+        ...(j.images ?? []).map((data) => ({ type: "image" as const, data, mimeType: "image/jpeg" })),
+      ] };
+    },
+  );
+
+  tool(
+    "job_done",
+    "For background helpers only: the job is finished; give a one-line result. Set tell_mind when the main loop should know now (e.g. a move is ready to play); otherwise it's only shown in the galaxy.",
+    { worker: z.string().min(1), job: z.string(), result: z.string(), tell_mind: z.boolean().optional() },
+    async ({ worker, job, result, tell_mind }) => {
+      const j = jobs.finish(worker, job, result);
+      if (tell_mind || j?.kind === "task") hub.report(`${j?.title ?? job}: ${result}`);
+      return text("Thanks. Call next_job for the next one.");
+    },
+  );
+
+  tool(
+    "queue_job",
+    "Hand slow or thoughtful work to the background helpers instead of doing it in the main loop: learning a move, planning something for the user, preparing an answer that needs care. Give a title and a full brief (what to do, which tools, what to report). A free helper picks it up; its result comes back to you as a helper report.",
+    { title: z.string().min(1), brief: z.string().min(10) },
+    async ({ title, brief }) => {
+      const j = jobs.add({ kind: "task", key: `task:${title}`, title, brief });
+      const st = jobs.status();
+      return text(j ? `Queued for the helpers (${st.workers.length} running, ${st.queued.length} jobs waiting).` : "That job is already queued or running.");
+    },
+  );
+
+  tool(
+    "room_belief",
+    "For helpers working out where she is: write down which room she's in, where she and the user are in it, and how you reasoned. Shown live in the galaxy's rooms view.",
+    {
+      room: z.string().min(1).describe("The room's name: an existing one if she knows it, else a fitting new name"),
+      map: z.string().optional().describe("The map id this is about (default: the phone's current map)"),
+      same_as: z.string().optional().describe("Map id of a known room this map looks like but isn't joined with"),
+      confidence: z.number().min(0).max(1),
+      where: z.string().describe("Where she is in the room, in plain words, by the things around her"),
+      user: z.string().optional().describe("Where the user is"),
+      reasoning: z.string().describe("2–4 plain sentences: what made you think so, what doesn't fit"),
+      worker: z.string().optional(),
+    },
+    async ({ room, map, same_as, confidence, where, user, reasoning, worker }) => {
+      const mapId = map ?? (body.scene?.mapId as string | null) ?? null;
+      beliefs.add({ at: Date.now(), mapId, room, ...(same_as ? { sameAs: same_as } : {}), confidence, where, ...(user ? { user } : {}), reasoning, ...(worker ? { by: worker } : {}) });
+      emitActivity({ kind: "result", area: "space", node: "space:rooms", label: `she thinks: ${room} (${Math.round(confidence * 100)}%) · ${where}`.slice(0, 160), grew: true });
+      let extra = "";
+      if (same_as && mapId && same_as !== mapId && groups.canonical(same_as).id !== groups.canonical(mapId).id) {
+        const a = groups.canonical(same_as).id, b = groups.canonical(mapId).id;
+        if (!jobs.has(`join:${a}|${b}`) && !jobs.has(`join:${b}|${a}`)) {
+          const p = roomjoin.pair(a, b) ?? (() => { const r = roomjoin.align(a, b); return r ? { a, b, ...r, at: Date.now(), status: "candidate" as const } : undefined; })();
+          const pick = (id: string) => frames.varied(frames.all().filter((m) => m.key && m.mapId === id).slice(-100), 2);
+          const pa = pick(a), pb = pick(b);
+          jobs.add({ kind: "join", key: `join:${a}|${b}`, title: `same room? ${a.slice(0, 8)} / ${b.slice(0, 8)}`,
+            brief: `Are these the same room? Map A ${a} (${world.readRooms()[a]?.name || "unnamed"}) and map B ${b} (${world.readRooms()[b]?.name || "unnamed"}). Pictures 1–${pa.length} are from A, ${pa.length + 1}–${pa.length + pb.length} from B. ${p ? `Their LiDAR maps line up with a score of ${p.score} (0.5+ strong, under 0.3 weak).` : "Their maps couldn't be compared yet."} A helper thought: ${reasoning} Compare what you see. Clearly the same: join_rooms with a "${a}", b "${b}" and why. Clearly different: keep_rooms_apart. Unsure: neither. Result line: your decision.`,
+            images: [...pa, ...pb].map((m) => frames.jpeg(m)).filter(Boolean) as string[] });
+          extra = " A helper will check whether the two maps are the same room.";
+        }
+      }
+      return text(`Noted: ${room}.${extra}`);
+    },
+  );
+
+  tool(
+    "join_rooms",
+    "For helpers: two saved maps are the same room. Joins them: things and places are shared, and the rooms view shows them as one (aligned by their LiDAR maps when they line up).",
+    { a: z.string().describe("Map id (the room to keep)"), b: z.string().describe("Map id (joins into a)"), why: z.string() },
+    async ({ a, b, why }) => {
+      const r = roomjoin.joinRooms(a, b, why);
+      emitActivity({ kind: "result", area: "space", node: "space:rooms", label: r.text.slice(0, 160), grew: true });
+      return text(r.text);
+    },
+  );
+
+  tool(
+    "keep_rooms_apart",
+    "For helpers: two saved maps are different rooms (they won't be suggested for joining again).",
+    { a: z.string(), b: z.string(), why: z.string() },
+    async ({ a, b, why }) => {
+      roomjoin.mark(groups.canonical(a).id, groups.canonical(b).id, "apart", why);
+      return text("Kept apart.");
+    },
+  );
+
+  tool(
     "recall_frames",
     "Look back through camera memory: plain camera pictures the phone keeps sending (no characters drawn in), stored on this computer. Use it whenever you wonder what happened or what is around: what the user showed a moment ago, what was in view when they said something, what a spot looked like earlier. By time (seconds_ago, or at a clock time today like '14:13'), or near a marked thing or named place (pictures that looked at it). Returns up to 8 pictures with their frame ids, oldest first; give a frame id to note_from_frame to mark something in it.",
     {
@@ -379,11 +489,13 @@ export function registerTools(server: McpServer, body: Body, hub: EventHub, voic
       at: z.string().optional().describe("A clock time today, 'HH:MM' or 'HH:MM:SS'"),
       span_s: z.number().min(1).max(3600).optional().describe("How long a stretch around that moment (default 10 s; 60 s without a time)"),
       near: z.string().optional().describe("A marked thing or named place: pictures that looked at it"),
+      room: z.string().optional().describe("A map id: only pictures from that room (all its joined maps)"),
       count: z.number().int().min(1).max(8).optional().describe("How many pictures (default 4)"),
     },
-    async ({ seconds_ago, at, span_s, near, count }) => {
+    async ({ seconds_ago, at, span_s, near, room, count }) => {
       const n = count ?? 4;
       let list = frames.all();
+      if (room) { const g = new Set(groups.members(room).map((m) => m.mapId)); list = list.filter((m) => m.mapId && g.has(m.mapId)); }
       if (!list.length) return fail("Camera memory is empty (Settings › Camera memory on the phone; frames arrive while the mind is connected).");
       let centre: number | null = null;
       if (seconds_ago !== undefined) centre = Date.now() - seconds_ago * 1000;
@@ -491,13 +603,13 @@ export function registerTools(server: McpServer, body: Body, hub: EventHub, voic
 
   tool(
     "live",
-    "Free time: give a character her next minute or two of life as a plan of steps, lived one after another on the phone with no pause between them (far smoother than one tool call per wake). You're woken when the plan ends, when she looks around (look step) or when the user does anything (which ends the plan at once). Steps: {do:'walk', thing|place|x,z|to} · {do:'face', place|x,z|to:'user'} · {do:'idle', seconds, look: degrees (+ = her left), fidgets: move-name prefixes for her little resting movements (e.g. ['graceful_lady_wait','sexy_lady_wait'])} · {do:'sit_on', thing|place|x,z, seconds} (sits properly on the real seat there: sofa, chair, bed edge) · {do:'play', name, times} · {do:'behavior', name, args, seconds} (sit, lie_down, follow_user, …) · {do:'think', text} (a small thought label, silent) · {do:'say', text} (aloud; rarely) · {do:'look'} (wakes you with a camera picture) · {do:'gaze', thing|place|x,z|to:'user', seconds} (look at something while carrying on) · {do:'wait', seconds}. 4–12 steps, mixing movement, stillness and moves like a real person would.",
+    "Free time: give a character her next minute or two of life as a plan of steps, lived one after another on the phone with no pause between them (far smoother than one tool call per wake). You're woken when the plan ends, when she looks around (look step) or when the user does anything (which ends the plan at once). Steps: {do:'walk', thing|place|x,z|to} · {do:'face', place|x,z|to:'user'} · {do:'idle', seconds, look: degrees (+ = her left), fidgets: move-name prefixes for her little resting movements (e.g. ['graceful_lady_wait','sexy_lady_wait'])} · {do:'sit_on', thing|place|x,z, seconds} (sits properly on the real seat there: sofa, chair, bed edge) · {do:'play', name, times} · {do:'behavior', name, args, seconds} (sit, lie_down, follow_user, …) · {do:'think', text} (a small thought label, silent) · {do:'say', text} (aloud; rarely) · {do:'look'} (wakes you with a camera picture) · {do:'gaze', thing|place|x,z|to:'user', seconds} (look at something while carrying on) · {do:'wait', seconds}. 8–16 steps: always busy, one thing flowing into the next, pauses 2–5 s (idle/wait are capped at 8 s), plenty of moves from her library. When a plan is nearly done you're asked for the next one: calling live then queues it to follow on with no gap.",
     {
       character,
       note: z.string().describe("What she's up to, in a few words (e.g. 'restless: checks out the kitchen, then stretches')"),
       steps: z.array(z.object({
         do: z.enum(["walk", "face", "idle", "sit_on", "play", "behavior", "think", "say", "look", "gaze", "wait"]),
-        fidgets: z.array(z.string()).optional(),
+        fidgets: z.union([z.array(z.string()), z.string()]).optional().transform((f) => (typeof f === "string" ? [f] : f)),
         place: z.string().optional(), thing: z.string().optional(), x: z.number().optional(), z: z.number().optional(), to: z.string().optional(),
         seconds: z.number().optional(), look: z.number().optional(),
         name: z.string().optional(), times: z.number().int().optional(), args: z.record(z.any()).optional(),
@@ -506,9 +618,11 @@ export function registerTools(server: McpServer, body: Body, hub: EventHub, voic
     },
     async ({ character: id, note, steps }) => {
       nameOf(id);
-      life.start(id, steps as Step[], note);
-      log(`${id} lives: ${note}`);
-      return text(`living: ${note} (${steps.length} steps). You'll be woken when it's done, when she looks around, or when the user does something.`);
+      const how = life.start(id, steps as Step[], note);
+      log(`${id} lives: ${note} (${how})`);
+      return text(how === "queued"
+        ? `queued: ${note} (${steps.length} steps) follows on as soon as her current plan ends.`
+        : `living: ${note} (${steps.length} steps). You'll be asked for the next plan when this one is nearly done, woken when she looks around, or when the user does something.`);
     },
   );
 
@@ -590,6 +704,7 @@ export function registerTools(server: McpServer, body: Body, hub: EventHub, voic
       let grid: Grid | null = r.ok && r.data?.rows ? (r.data as Grid) : null;
       let memoryNote = "";
       if (grid) {
+        if (mapId) roommap.savePhone(mapId, grid);
         const f = roommap.fill(grid, mapId);
         grid = f.grid;
         if (f.filled) memoryNote = `\n(${f.filled} cells the phone hasn't scanned this time are filled in from camera memory.)`;

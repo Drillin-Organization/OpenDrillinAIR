@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Body } from "./body.js";
+import * as groups from "./groups.js";
 import { DATA } from "./store.js";
 
 export type Thing = { x: number; y: number; z: number; kind: string; note: string; at: number; visits: number };
@@ -11,7 +12,22 @@ export type Thing = { x: number; y: number; z: number; kind: string; note: strin
 const DIR = path.join(DATA, "things");
 const file = (mapId: string | null | undefined) => path.join(DIR, `${(mapId || "unsaved").replace(/[^A-Za-z0-9_-]/g, "")}.json`);
 
+/// Things she noticed in this map, plus those from other maps of the same
+/// room (joined), carried into this map's coordinates (its own win).
 export function readThings(mapId: string | null | undefined): Record<string, Thing> {
+  const own = readThingsRaw(mapId);
+  if (!mapId) return own;
+  const shared: Record<string, Thing> = {};
+  for (const m of groups.members(mapId)) {
+    if (m.mapId === mapId) continue;
+    const xf = groups.between(m.mapId, mapId);
+    if (!xf) continue;
+    for (const [n, t] of Object.entries(readThingsRaw(m.mapId))) shared[n] = { ...t, ...groups.apply(xf, t) };
+  }
+  return { ...shared, ...own };
+}
+
+export function readThingsRaw(mapId: string | null | undefined): Record<string, Thing> {
   try { return JSON.parse(fs.readFileSync(file(mapId), "utf8")); } catch { return {}; }
 }
 
