@@ -1,0 +1,26 @@
+{
+  "name": "drillin-brain",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The characters' mind for Drillin AIR: Claude driving the AR body over WebSocket.",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "bonjour-service": "^1.4.4",
+    "kokoro-js": "^1.2.1",
+    "onnxruntime-node": "^1.21.0",
+    "ws": "^8.23.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/ws": "^8.18.2",
+    "tsx": "^4.23.15",
+    "typescript": "5.9"
+  }
+}

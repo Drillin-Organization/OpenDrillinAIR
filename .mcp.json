@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "drillin-body": {
+      "command": "brain/node_modules/.bin/tsx",
+      "args": ["brain/src/main.ts"]
+    }
+  }
+}

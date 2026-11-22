@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Soul Galaxy</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* A full-bleed sky of the soul's mind: areas as constellations around the Mind,
+   what it knows as stars, every thought/sense/action as a travelling pulse. */
+:root {
+  --bg: #05070b; --fg: #e2e8f1; --dim: #8592a6; --faint: rgba(226,232,241,.10);
+  --panel: rgba(11,15,22,.80); --accent: #8fb0ff; --mode: dark; color-scheme: dark;
+  --display: "Space Grotesk", "Avenir Next", system-ui, sans-serif;
+  --body: "Inter", system-ui, -apple-system, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #edf0f4; --fg: #111822; --dim: #5b6677; --faint: rgba(17,24,34,.10);
+    --panel: rgba(250,251,253,.86); --accent: #2f5bd3; --mode: light; color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #edf0f4; --fg: #111822; --dim: #5b6677; --faint: rgba(17,24,34,.10);
+  --panel: rgba(250,251,253,.86); --accent: #2f5bd3; --mode: light; color-scheme: light;
+}
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); overflow: hidden; }
+#sky { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+#sky.dragging { cursor: grabbing; } #sky.pointing { cursor: pointer; }
+.hud { position: absolute; inset: 0; pointer-events: none; display: flex; flex-direction: column; gap: 10px;
+  padding: 14px max(16px, env(safe-area-inset-right, 0px)) 14px max(16px, env(safe-area-inset-left, 0px)); }
+.hud > * { pointer-events: auto; }
+.top { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.brand { display: flex; flex-direction: column; gap: 2px; margin-right: auto; min-width: 0; }
+.brand h1 { margin: 0; font: 600 17px/1.1 var(--display); letter-spacing: .01em; }
+.brand .sub { font: 400 11px/1.3 var(--mono); color: var(--dim); font-variant-numeric: tabular-nums; }
+.status { display: inline-flex; align-items: center; gap: 6px; font: 400 11px/1 var(--mono); color: var(--dim);
+  padding: 7px 11px; border-radius: 999px; background: var(--panel); border: 1px solid var(--faint); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+.status i { width: 6px; height: 6px; border-radius: 50%; background: var(--dim); }
+.status[data-state="live"] i { background: #2fbf71; box-shadow: 0 0 8px #2fbf71; }
+.status[data-state="think"] i { background: #f2b84b; box-shadow: 0 0 8px #f2b84b; }
+.status[data-state="off"] i { background: #e05a4f; }
+.status[data-state="dream"] i { background: #a98bff; box-shadow: 0 0 10px #a98bff; animation: breathe 3.2s ease-in-out infinite; }
+@keyframes breathe { 50% { opacity: .35; } }
+.dreamtext { font: italic 400 12px/1.45 var(--body); color: var(--fg); opacity: .9; border-left: 2px solid #a98bff; padding-left: 8px; }
+.caption { align-self: center; max-width: min(620px, 100%); font: 400 14px/1.45 var(--body); text-align: center; padding: 9px 16px;
+  border-radius: 12px; background: var(--panel); border: 1px solid var(--faint); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  transition: opacity .4s; }
+.caption b { font: 500 10px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dim); display: block; margin-bottom: 4px; }
+.spacer { flex: 1; pointer-events: none !important; }
+.bottom { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 18px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px; max-width: 760px; }
+.legend button { display: inline-flex; align-items: center; gap: 6px; font: 400 11px/1 var(--body); color: var(--fg); background: var(--panel);
+  border: 1px solid var(--faint); border-radius: 999px; padding: 6px 9px; cursor: pointer; }
+.legend button i { width: 7px; height: 7px; border-radius: 50%; }
+.legend button span { color: var(--dim); font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.legend button[aria-pressed="false"] { opacity: .45; }
+.legend button:focus-visible, .feed button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.find { pointer-events: auto; font: 400 12px/1 var(--body); color: var(--fg); background: var(--panel); border: 1px solid var(--faint); border-radius: 999px;
+  padding: 7px 12px; width: 210px; outline: none; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+.find:focus-visible { border-color: var(--accent); }
+.hint { margin-left: auto; font: 400 11px/1.4 var(--mono); color: var(--dim); text-align: right; }
+.feed { position: absolute; z-index: 4; top: 64px; right: max(16px, env(safe-area-inset-right, 0px)); width: 320px; max-height: calc(100% - 150px);
+  overflow: hidden; display: flex; flex-direction: column; gap: 4px; pointer-events: auto;
+  mask-image: linear-gradient(to bottom, #000 70%, transparent); -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent); }
+.feed h2 { margin: 0 0 4px; font: 500 10px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+.item { display: grid; grid-template-columns: 8px 1fr auto; gap: 8px; align-items: start; padding: 7px 9px; border-radius: 10px;
+  background: var(--panel); border: 1px solid var(--faint); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  font: 400 12px/1.35 var(--body); animation: drop .35s ease-out; }
+.item i { width: 8px; height: 8px; border-radius: 50%; margin-top: 4px; }
+.item .what { min-width: 0; overflow-wrap: anywhere; }
+.item .what small { display: block; color: var(--dim); font: 400 10.5px/1.35 var(--mono); margin-top: 2px; }
+.item time { font: 400 10px/1.6 var(--mono); color: var(--dim); font-variant-numeric: tabular-nums; }
+.item.err { border-color: rgba(224,90,79,.5); }
+@keyframes drop { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+.tip { position: absolute; pointer-events: none; z-index: 5; max-width: 300px; background: var(--panel); border: 1px solid var(--faint); border-radius: 10px;
+  padding: 9px 11px; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); font: 400 12px/1.4 var(--body); box-shadow: 0 8px 30px rgba(0,0,0,.25); }
+.tip .k { font: 500 10px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); display: flex; gap: 6px; align-items: center; }
+.tip .k i { width: 7px; height: 7px; border-radius: 50%; }
+.tip h3 { margin: 5px 0 3px; font: 600 14px/1.25 var(--display); text-wrap: balance; }
+.tip p { margin: 0; color: var(--dim); white-space: pre-wrap; max-height: 180px; overflow: hidden; }
+.empty { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
+.empty div { text-align: center; max-width: 360px; padding: 0 16px; }
+.empty h2 { margin: 0 0 6px; font: 600 18px/1.2 var(--display); }
+.empty p { margin: 0; color: var(--dim); font-size: 13px; line-height: 1.5; }
+.now { position: absolute; z-index: 4; top: 64px; left: max(16px, env(safe-area-inset-left, 0px)); width: 272px; max-height: calc(100% - 150px);
+  overflow: auto; display: flex; flex-direction: column; gap: 8px; pointer-events: auto; scrollbar-width: none; }
+.now::-webkit-scrollbar { display: none; }
+.now h2 { margin: 0; font: 500 10px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+.card { padding: 10px 11px; border-radius: 12px; background: var(--panel); border: 1px solid var(--faint); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  font: 400 12px/1.35 var(--body); display: flex; flex-direction: column; gap: 7px; }
+.card .who { display: flex; align-items: baseline; gap: 8px; }
+.card .who b { font: 600 14px/1.2 var(--display); }
+.card .who span { color: var(--dim); font: 400 10.5px/1 var(--mono); margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55%; }
+.bars { display: grid; grid-template-columns: 70px 1fr 32px; gap: 4px 8px; align-items: center; font: 400 10.5px/1.2 var(--mono); color: var(--dim); }
+.bar { height: 5px; border-radius: 3px; background: var(--faint); overflow: hidden; }
+.bar i { display: block; height: 100%; border-radius: 3px; background: var(--c, var(--accent)); transition: width .8s ease; }
+.bars em { font-style: normal; text-align: right; font-variant-numeric: tabular-nums; }
+.energy { font-size: 11.5px; color: var(--dim); }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chips span { font: 400 10.5px/1 var(--mono); padding: 4px 7px; border-radius: 999px; border: 1px solid var(--faint); }
+.steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; font: 400 11px/1.35 var(--mono); color: var(--dim); }
+.steps li.on { color: var(--fg); }
+.steps li.on::before { content: "▶ "; color: var(--c, var(--accent)); }
+.steps li.done { opacity: .55; text-decoration: line-through; }
+.lbl { font: 500 9.5px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); }
+.sys { display: grid; grid-template-columns: auto 1fr; gap: 5px 10px; font: 400 11px/1.3 var(--mono); }
+.sys dt { color: var(--dim); } .sys dd { margin: 0; overflow-wrap: anywhere; }
+[hidden] { display: none !important; }
+@media (max-width: 760px) {
+  .feed { top: auto; bottom: 64px; left: 12px; right: 12px; width: auto; max-height: 34%; mask-image: none; -webkit-mask-image: none; overflow: auto; }
+  .hint { display: none; }
+  .now { top: 112px; left: 12px; right: 12px; width: auto; max-height: 22%; }
+  .now .sysCard, .now .card .energy, .now .card .lbl, .now .card .steps { display: none; }
+  .feed { max-height: 26%; }
+}
+</style>
+</head>
+<body>
+<canvas id="sky" aria-label="The soul's mind: areas, what it knows, and live activity"></canvas>
+<div class="empty" id="empty"><div><h2 id="emptyTitle">Waking the mind…</h2><p id="emptyText">Connecting to the brain.</p></div></div>
+<div class="hud">
+  <div class="top">
+    <div class="brand"><h1>Soul Galaxy</h1><div class="sub" id="counts">—</div></div>
+    <span class="status" id="status" data-state="off"><i></i><span>Connecting</span></span>
+  </div>
+  <div class="caption" id="caption" hidden><b id="captionKind">Heard</b><span id="captionText"></span></div>
+  <div class="spacer"></div>
+  <div class="bottom">
+    <div class="legend" id="legend"></div>
+    <input class="find" id="find" type="search" placeholder="Find a move, tool, memory…" aria-label="Find dots in the galaxy" autocomplete="off">
+    <div class="hint">Drag to turn · scroll to zoom · hover a star</div>
+  </div>
+</div>
+<section class="now" id="now" aria-label="Right now" hidden><h2>Right now</h2><div id="nowChars" style="display:contents"></div>
+  <div class="card sysCard"><dl class="sys" id="nowSys"></dl></div></section>
+<section class="feed" id="feed" aria-live="polite" aria-label="Thought stream"><h2>Thought stream</h2></section>
+<div class="tip" id="tip" hidden></div>
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  const cv = $('#sky'), ctx = cv.getContext('2d');
+  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let dark = true, fgRGB = '226,232,241';
+  function readTheme() {
+    dark = getComputedStyle(document.documentElement).getPropertyValue('--mode').trim() !== 'light';
+    fgRGB = dark ? '226,232,241' : '17,24,34';
+  }
+  readTheme();
+  matchMedia('(prefers-color-scheme: light)').addEventListener('change', readTheme);
+
+  // ---------- state ----------
+  const S = { areas: [], hue: {}, nodes: [], byId: new Map(), edges: [], isolate: null, connected: false, phone: '' };
+  const areaLevel = {};          // recent activity per area (decays)
+  const sparks = [];             // pulses travelling along paths
+  const rings = [];              // expanding rings (births, wakes)
+  let hovered = null, pinned = null, lastThink = 0;
+  let yaw = 0.5, pitch = -0.28, zoom = 1, viewScale = 1, W = 0, H = 0, cx = 0, cy = 0;
+
+  function col(area, a = 1) {
+    const h = S.hue[area] ?? 210;
+    if (area === 'mind') return dark ? `hsla(210,30%,92%,${a})` : `hsla(215,25%,22%,${a})`;
+    return dark ? `hsla(${h},80%,66%,${a})` : `hsla(${h},64%,40%,${a})`;
+  }
+  function resize() {
+    const dpr = Math.min(1.75, devicePixelRatio || 1), r = cv.getBoundingClientRect();
+    W = r.width; H = r.height; cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  addEventListener('resize', resize); resize();
+
+  // ---------- layout ----------
+  const norm3 = (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
+  function fib(i, m) { const y = 1 - 2 * (i + .5) / m, r = Math.sqrt(Math.max(0, 1 - y * y)), th = i * 2.399963; return [Math.cos(th) * r, y, Math.sin(th) * r]; }
+  function capPoint(dir, ang, phi) {
+    const up = Math.abs(dir[1]) < .9 ? [0, 1, 0] : [1, 0, 0];
+    const u = norm3([dir[1] * up[2] - dir[2] * up[1], dir[2] * up[0] - dir[0] * up[2], dir[0] * up[1] - dir[1] * up[0]]);
+    const v = [dir[1] * u[2] - dir[2] * u[1], dir[2] * u[0] - dir[0] * u[2], dir[0] * u[1] - dir[1] * u[0]];
+    const c = Math.cos(ang), s = Math.sin(ang);
+    return [0, 1, 2].map((i) => dir[i] * c + (u[i] * Math.cos(phi) + v[i] * Math.sin(phi)) * s);
+  }
+  const hashU = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return ((h >>> 0) % 100000) / 100000; };
+
+  let MOVES = [];
+  async function loadMoves() {
+    try { MOVES = await (await fetch('/moves', { cache: 'no-store' })).json(); if (S.lastGraph) setGraph(S.lastGraph); } catch (e) { console.error(e); }
+  }
+  function setGraph(g) {
+    S.lastGraph = g;
+    if (MOVES.length) g = { ...g, nodes: g.nodes.concat(MOVES.map((m) => ({ id: m.id, label: m.label, area: 'skills', kind: 'move', weight: .35, parent: 'moves:' + m.kind,
+      note: `${m.name} · ${m.s} s · ${m.tags.join(', ')}\nA recorded human move from the library. Lights up whenever it plays, whoever started it.`, links: ['moves:' + m.kind] }))) };
+    S.areas = g.areas; S.areas.forEach((a) => { S.hue[a.id] = a.hue; areaLevel[a.id] = areaLevel[a.id] || 0; });
+    const outer = S.areas.filter((a) => a.id !== 'mind');
+    const dir = new Map(outer.map((a, i) => [a.id, fib(i, outer.length)]));
+    const prev = S.byId, next = new Map();
+    const byArea = new Map();
+    const kids = new Map();
+    for (const raw of g.nodes) {
+      if (raw.parent) { (kids.get(raw.parent) || kids.set(raw.parent, []).get(raw.parent)).push(raw); continue; }
+      (byArea.get(raw.area) || byArea.set(raw.area, []).get(raw.area)).push(raw);
+    }
+    const ordered = g.nodes.filter((r) => !r.parent).concat(g.nodes.filter((r) => r.parent));
+    for (const raw of ordered) {
+      const old = prev.get(raw.id);
+      const n = Object.assign(old || { p: [0, 0, 0], sx: 0, sy: 0, s: 1, z: 0, glow: 0, born: prev.size ? 1 : 0 }, raw);
+      if (raw.id === 'mind') n.t = [0, 0, 0];
+      else if (raw.kind === 'area') n.t = dir.get(raw.area).map((x) => x * .62);
+      else if (raw.parent && next.get(raw.parent)) {
+        // A cluster around its parent, further out (moves around their kind).
+        const par = next.get(raw.parent), list = kids.get(raw.parent), j = list.indexOf(raw);
+        const cap = .05 + .26 * Math.sqrt(list.length / 700);
+        const p = capPoint(norm3(par.t), cap * Math.sqrt((j + .5) / list.length), j * 2.399963);
+        const r = 1.32 + .1 * hashU(raw.id);
+        n.t = p.map((x) => x * r);
+      } else {
+        const list = (byArea.get(raw.area) || [raw]).filter((x) => x.kind !== 'area');
+        const j = list.indexOf(raw), cap = .1 + .42 * Math.sqrt(list.length / 60);
+        const p = capPoint(dir.get(raw.area) || [0, 1, 0], cap * Math.sqrt((j + .5) / list.length), j * 2.399963);
+        const r = 1.02 + .14 * hashU(raw.id);
+        n.t = p.map((x) => x * r);
+      }
+      if (!old) { n.p = n.t.map((x) => x * .2); if (prev.size) rings.push({ node: n, t: 0, dur: 1.6 }); }
+      next.set(n.id, n);
+    }
+    S.byId = next; S.nodes = [...next.values()];
+    const seen = new Set(); S.edges = [];
+    for (const n of S.nodes) for (const l of n.links || []) {
+      if (!next.has(l)) continue;
+      const k = n.id < l ? n.id + '|' + l : l + '|' + n.id;
+      if (!seen.has(k)) { seen.add(k); S.edges.push([n, next.get(l)]); }
+    }
+    for (const n of S.nodes) n.nbr = new Set();
+    for (const [a, b] of S.edges) { a.nbr.add(b.id); b.nbr.add(a.id); }
+    reassignDust(); renderLegend(); renderCounts();
+    $('#empty').hidden = true;
+  }
+
+  // ---------- dust ----------
+  const DUST = 1300;
+  const dust = Array.from({ length: DUST }, () => ({ parent: null, o: [0, 0, 0], p: [(Math.random() - .5) * 3, (Math.random() - .5) * 3, (Math.random() - .5) * 3], ph: Math.random() * 6.28, sp: (Math.random() * .4 + .1) * (Math.random() < .5 ? -1 : 1), sz: Math.random() }));
+  function reassignDust() {
+    if (!S.nodes.length) return;
+    const hosts = S.nodes.filter((n) => n.kind !== 'move');
+    const tot = hosts.reduce((s, n) => s + n.weight, 0);
+    for (const d of dust) {
+      let x = Math.random() * tot, pick = hosts[0];
+      for (const n of hosts) { x -= n.weight; if (x <= 0) { pick = n; break; } }
+      d.parent = pick;
+      const rr = (.04 + .035 * pick.weight) * Math.cbrt(Math.random()), u = Math.random() * 2 - 1, th = Math.random() * 6.283, s = Math.sqrt(1 - u * u);
+      d.o = [Math.cos(th) * s * rr, u * rr * .7, Math.sin(th) * s * rr];
+    }
+  }
+
+  // ---------- projection ----------
+  function project(p, out) {
+    const cyw = Math.cos(yaw), syw = Math.sin(yaw), x1 = p[0] * cyw - p[2] * syw, z1 = p[0] * syw + p[2] * cyw;
+    const cp = Math.cos(pitch), sp = Math.sin(pitch), y1 = p[1] * cp - z1 * sp, z2 = p[1] * sp + z1 * cp;
+    const s = 3.4 / (3.4 + z2), k = viewScale * zoom;
+    out.sx = cx + x1 * s * k; out.sy = cy + y1 * s * k; out.s = s; out.z = z2; return out;
+  }
+  const mid = (a, b) => { const mx = (a.sx + b.sx) / 2, my = (a.sy + b.sy) / 2; return [mx + (cx - mx) * .14, my + (cy - my) * .14]; };
+  const matches = (n) => !S.query || n.id === 'mind' || (n.label + ' ' + n.id).toLowerCase().includes(S.query);
+  const visible = (n) => (!S.isolate || n.area === S.isolate || n.id === 'mind') && matches(n);
+
+  // ---------- live activity ----------
+  function hubOf(area) { return S.byId.get(area === 'mind' ? 'mind' : 'area:' + area); }
+  function fire(a) {
+    const mind = S.byId.get('mind'), node = a.node && S.byId.get(a.node), hub = hubOf(node ? node.area : a.area);
+    const parent = node && node.parent && S.byId.get(node.parent);
+    if (node && a.hold) node.holdUntil = performance.now() + a.hold * 1000;
+    if (node) node.lastFired = Date.now();
+    areaLevel[a.area] = Math.min(1.5, (areaLevel[a.area] || 0) + .6);
+    if (a.kind !== 'result') areaLevel.mind = Math.min(1.5, (areaLevel.mind || 0) + .3);
+    lastThink = performance.now();
+    const color = a.kind === 'error' ? 'err' : a.area;
+    // Senses flow in to the mind; actions flow out from it.
+    const inward = a.kind === 'event' || a.kind === 'report';
+    let path = [mind, hub, parent, node].filter(Boolean);
+    if (inward) path = path.reverse();
+    if (a.kind === 'wake') { rings.push({ node: mind, t: 0, dur: 1.2, wake: true }); if (node) { node.glow = 1; rings.push({ node, t: 0, dur: 1.4 }); } return; }
+    if (path.length >= 2) sparks.push({ path, t: 0, dur: .55 * (path.length - 1), color, big: a.kind !== 'result' });
+    if (node) node.glow = 1;
+    if (hub) hub.glow = Math.max(hub.glow, .7);
+  }
+
+  // ---------- frame ----------
+  let last = performance.now(), time = 0;
+  const tmp = { sx: 0, sy: 0, s: 1, z: 0 };
+  function frame(now) {
+    requestAnimationFrame(frame);
+    if (document.hidden) { last = now; return; }
+    try { draw(now); } catch (e) { console.error(e); }
+  }
+  function draw(now) {
+    const dt = Math.min(.05, (now - last) / 1000); last = now; time += dt;
+    const feedOpen = W > 760, left = feedOpen && !$('#now').hidden ? 290 : 0, right = feedOpen ? W - 340 : W;
+    cx += ((left + right) / 2 - cx) * .12; cy += (H / 2 + 8 - cy) * .12;
+    viewScale += (Math.min((right - left) / 2.9, (H - 160) / 2.9) - viewScale) * .08;
+    const thinking = now - lastThink < 2500;
+    if (!dragging && !reduceMotion) yaw += dt * (hovered ? .012 : thinking ? .1 : .055);
+    const ease = reduceMotion ? 1 : .06;
+    for (const n of S.nodes) { for (let i = 0; i < 3; i++) n.p[i] += (n.t[i] - n.p[i]) * ease; project(n.p, n); n.glow = Math.max(0, n.glow - dt * .55); if (n.holdUntil > now) n.glow = Math.max(n.glow, .85); }
+    for (const k in areaLevel) areaLevel[k] = Math.max(0, areaLevel[k] - dt * .25);
+    ctx.clearRect(0, 0, W, H);
+    const focus = hovered || pinned;
+    const set = new Set(); if (focus) { set.add(focus.id); focus.nbr.forEach((x) => set.add(x)); }
+
+    // dust
+    ctx.globalCompositeOperation = dark ? 'lighter' : 'source-over';
+    for (const d of dust) {
+      const par = d.parent; if (!par) continue;
+      const a = d.ph + time * d.sp * (reduceMotion ? 0 : 1) * (1 + (areaLevel[par.area] || 0) * 2), c = Math.cos(a), s = Math.sin(a);
+      const e = reduceMotion ? 1 : .05;
+      d.p[0] += (par.p[0] + d.o[0] * c - d.o[2] * s - d.p[0]) * e; d.p[1] += (par.p[1] + d.o[1] - d.p[1]) * e; d.p[2] += (par.p[2] + d.o[0] * s + d.o[2] * c - d.p[2]) * e;
+      project(d.p, tmp);
+      let alpha = Math.max(.05, Math.min(.7, (tmp.s - .62) * 1.4)) * (.55 + .45 * Math.min(1, areaLevel[par.area] || 0));
+      if (!visible(par)) alpha *= .12; else if (focus && !set.has(par.id)) alpha *= .3;
+      const sz = (.5 + d.sz * 1.1) * tmp.s;
+      ctx.fillStyle = col(par.area, alpha * (dark ? .7 : .55)); ctx.fillRect(tmp.sx - sz / 2, tmp.sy - sz / 2, sz, sz);
+    }
+    ctx.globalCompositeOperation = 'source-over';
+
+    // links
+    for (const [a, b] of S.edges) {
+      const on = focus && (a.id === focus.id || b.id === focus.id);
+      if ((a.kind === 'move' || b.kind === 'move') && !on && Math.max(a.glow, b.glow) < .05) continue;
+      const vis = visible(a) && visible(b);
+      const act = Math.max(a.glow, b.glow) * .6;
+      let alpha = on ? .8 : (focus ? .03 : .09 + act * .4);
+      if (!vis) alpha *= .15;
+      const lead = a.kind === 'area' || a.id === 'mind' ? b : a;
+      ctx.strokeStyle = on || act > .05 ? col(lead.area, alpha) : `rgba(${fgRGB},${alpha})`;
+      ctx.lineWidth = on ? 1.3 : .7 + act;
+      ctx.beginPath(); ctx.moveTo(a.sx, a.sy); const [qx, qy] = mid(a, b); ctx.quadraticCurveTo(qx, qy, b.sx, b.sy); ctx.stroke();
+    }
+
+    // sparks: pulses travelling mind → area → node (or back, for senses)
+    ctx.globalCompositeOperation = dark ? 'lighter' : 'source-over';
+    for (let i = sparks.length - 1; i >= 0; i--) {
+      const sp = sparks[i]; sp.t += dt;
+      const u = Math.min(.999, sp.t / sp.dur) * (sp.path.length - 1), seg = Math.floor(u), f = u - seg;
+      const a = sp.path[seg], b = sp.path[seg + 1];
+      const [qx, qy] = mid(a, b), k = 1 - f;
+      const x = k * k * a.sx + 2 * k * f * qx + f * f * b.sx, y = k * k * a.sy + 2 * k * f * qy + f * f * b.sy;
+      const c = sp.color === 'err' ? (a2) => `rgba(255,96,84,${a2})` : (a2) => col(sp.color, a2);
+      // trail
+      ctx.strokeStyle = c(.55); ctx.lineWidth = sp.big ? 1.6 : 1;
+      ctx.beginPath(); ctx.moveTo(a.sx, a.sy); ctx.quadraticCurveTo(qx, qy, b.sx, b.sy); ctx.globalAlpha = .35; ctx.stroke(); ctx.globalAlpha = 1;
+      ctx.fillStyle = c(.18); ctx.beginPath(); ctx.arc(x, y, sp.big ? 9 : 6, 0, 6.283); ctx.fill();
+      ctx.fillStyle = c(.95); ctx.beginPath(); ctx.arc(x, y, sp.big ? 2.6 : 1.8, 0, 6.283); ctx.fill();
+      if (sp.t >= sp.dur) { const end = sp.path[sp.path.length - 1]; end.glow = 1; sparks.splice(i, 1); }
+    }
+    ctx.globalCompositeOperation = 'source-over';
+
+    // stars, back to front
+    const order = [...S.nodes].sort((a, b) => b.z - a.z);
+    for (const n of order) {
+      const vis = visible(n), isOn = set.has(n.id);
+      let alpha = Math.max(.25, Math.min(1, (n.s - .55) * 1.9));
+      if (!vis) alpha *= .12; else if (focus && !isOn) alpha *= .35;
+      const big = n.id === 'mind' ? 4 : n.kind === 'area' ? 2.2 : 1;
+      let r = n.kind === 'move' ? (1 + 3.2 * n.glow) * n.s : (1.8 + Math.sqrt(n.weight * big) * 2) * n.s;
+      if (n.id === 'mind') r *= 1 + .08 * Math.sin(time * (thinking ? 5 : 1.6)) + .25 * Math.min(1, areaLevel.mind || 0);
+      if (n.kind === 'area') r *= 1 + .35 * Math.min(1, areaLevel[n.area] || 0);
+      n.r = r;
+      const g = Math.max(n.glow, n.kind === 'area' ? Math.min(1, areaLevel[n.area] || 0) * .8 : 0);
+      if (n.kind === 'move' && g <= .02 && !isOn) {
+        ctx.fillStyle = col(n.area, alpha * (S.query && vis ? .95 : .5)); ctx.fillRect(n.sx - r * .7, n.sy - r * .7, r * 1.4, r * 1.4); continue;
+      }
+      if (dark && (g > .02 || n.kind === 'area' || n.id === 'mind' || isOn)) {
+        ctx.fillStyle = col(n.area, alpha * (.14 + .3 * g)); ctx.beginPath(); ctx.arc(n.sx, n.sy, r * (3 + 2 * g), 0, 6.283); ctx.fill();
+      }
+      ctx.fillStyle = col(n.area, alpha);
+      if (n.kind === 'moves') { // move library kinds: hexagons
+        const d = r * 1.2; ctx.beginPath(); for (let k = 0; k < 6; k++) { const a2 = k * 1.0472 + .5236; ctx.lineTo(n.sx + Math.cos(a2) * d, n.sy + Math.sin(a2) * d); } ctx.closePath(); ctx.fill();
+      } else if (n.kind === 'need' || n.kind === 'inner' || n.kind === 'plan') { // a dot with an arc showing how much
+        ctx.beginPath(); ctx.arc(n.sx, n.sy, r * (n.kind === 'need' ? .5 : .7), 0, 6.283); ctx.fill();
+        const lv = Math.max(0, Math.min(1, n.level || 0));
+        ctx.strokeStyle = col(n.area, alpha * .25); ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(n.sx, n.sy, r * 1.15, 0, 6.283); ctx.stroke();
+        ctx.strokeStyle = col(n.area, alpha); ctx.beginPath(); ctx.arc(n.sx, n.sy, r * 1.15, -1.5708, -1.5708 + lv * 6.283); ctx.stroke();
+        if (n.kind === 'plan') { ctx.setLineDash([2, 3]); ctx.beginPath(); ctx.arc(n.sx, n.sy, r * 1.6, time, time + 6.283); ctx.stroke(); ctx.setLineDash([]); }
+      } else if (n.kind === 'emotion') { // feelings: four-point stars that breathe
+        const d = r * (1.3 + .15 * Math.sin(time * 2.4 + n.sx * .01)), w = d * .32;
+        ctx.beginPath(); ctx.moveTo(n.sx, n.sy - d); ctx.lineTo(n.sx + w, n.sy - w); ctx.lineTo(n.sx + d, n.sy); ctx.lineTo(n.sx + w, n.sy + w); ctx.lineTo(n.sx, n.sy + d); ctx.lineTo(n.sx - w, n.sy + w); ctx.lineTo(n.sx - d, n.sy); ctx.lineTo(n.sx - w, n.sy - w); ctx.closePath(); ctx.fill();
+      } else if (n.kind === 'room' || n.kind === 'room-here') { // rooms: rounded squares, the current one ringed
+        const d = r * .9; ctx.beginPath(); ctx.roundRect ? ctx.roundRect(n.sx - d, n.sy - d, d * 2, d * 2, d * .4) : ctx.rect(n.sx - d, n.sy - d, d * 2, d * 2); ctx.fill();
+        if (n.kind === 'room-here') { ctx.strokeStyle = col(n.area, alpha); ctx.lineWidth = 1.3; ctx.beginPath(); ctx.arc(n.sx, n.sy, r * 1.9, 0, 6.283); ctx.stroke(); }
+      } else if (n.kind === 'dream' || n.kind === 'dreams') { // dreams: crescent moons
+        const d = r * (n.kind === 'dreams' ? 1.3 : 1.05);
+        ctx.beginPath(); ctx.arc(n.sx, n.sy, d, 0, 6.283); ctx.arc(n.sx + d * .45, n.sy - d * .3, d * .8, 6.283, 0, true); ctx.fill('evenodd');
+      } else if (n.kind === 'identity') { // who she is: a ringed star
+        ctx.beginPath(); ctx.arc(n.sx, n.sy, r * .75, 0, 6.283); ctx.fill();
+        ctx.strokeStyle = col(n.area, alpha * .8); ctx.lineWidth = 1; for (const m of [1.25, 1.6]) { ctx.beginPath(); ctx.arc(n.sx, n.sy, r * m, 0, 6.283); ctx.stroke(); }
+      } else if (n.kind === 'animation') { // skills: diamonds
+        const d = r * 1.25; ctx.beginPath(); ctx.moveTo(n.sx, n.sy - d); ctx.lineTo(n.sx + d, n.sy); ctx.lineTo(n.sx, n.sy + d); ctx.lineTo(n.sx - d, n.sy); ctx.closePath(); ctx.fill();
+      } else if (n.kind === 'memory' || n.kind === 'persona' || n.kind === 'life') { // memory: ringed dots
+        ctx.beginPath(); ctx.arc(n.sx, n.sy, r * .55, 0, 6.283); ctx.fill();
+        ctx.strokeStyle = col(n.area, alpha * .85); ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(n.sx, n.sy, r * 1.05, 0, 6.283); ctx.stroke();
+      } else if (n.kind === 'behaviour') { // body: squares
+        const d = r * .95; ctx.fillRect(n.sx - d, n.sy - d, d * 2, d * 2);
+      } else if (n.kind === 'character-away') {
+        ctx.strokeStyle = col(n.area, alpha); ctx.lineWidth = 1.4; ctx.beginPath(); ctx.arc(n.sx, n.sy, r, 0, 6.283); ctx.stroke();
+      } else { ctx.beginPath(); ctx.arc(n.sx, n.sy, r, 0, 6.283); ctx.fill(); }
+      if (n.kind === 'area' || n.id === 'mind') { ctx.strokeStyle = col(n.area, alpha * .6); ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(n.sx, n.sy, r + 4 * n.s, 0, 6.283); ctx.stroke(); }
+      if (n === pinned) { ctx.strokeStyle = `rgba(${fgRGB},.85)`; ctx.setLineDash([2, 3]); ctx.beginPath(); ctx.arc(n.sx, n.sy, r + 8 * n.s, time % 6.283, time % 6.283 + 6.283); ctx.stroke(); ctx.setLineDash([]); }
+    }
+    // rings: new stars being born, the mind waking
+    for (let i = rings.length - 1; i >= 0; i--) {
+      const rg = rings[i]; rg.t += dt; const f = rg.t / rg.dur;
+      if (f >= 1) { rings.splice(i, 1); continue; }
+      const n = rg.node; ctx.strokeStyle = col(n.area, (1 - f) * .8); ctx.lineWidth = rg.wake ? 2 : 1.3;
+      ctx.beginPath(); ctx.arc(n.sx, n.sy, (n.r || 4) + f * (rg.wake ? 80 : 30) * n.s, 0, 6.283); ctx.stroke();
+    }
+
+    // labels: areas always, active and focused stars, collisions skipped
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    const cand = [];
+    for (const n of order) {
+      if (n.s < .7 || !visible(n)) continue;
+      const strong = focus === n, hub = n.kind === 'area' || n.id === 'mind';
+      if (strong || hub || set.has(n.id) || n.glow > .25 || n.weight >= 2 || (S.query && n.id !== 'mind')) cand.push([n, strong || hub, (strong ? 1e4 : 0) + (hub ? 500 : 0) + n.glow * 100 + n.weight]);
+    }
+    cand.sort((x, y) => y[2] - x[2]);
+    const boxes = [];
+    for (const [n, strong] of cand.slice(0, 60)) {
+      const hub = n.kind === 'area' || n.id === 'mind';
+      ctx.font = hub ? '600 13px "Space Grotesk", system-ui, sans-serif' : `${strong ? 500 : 400} 11px ${strong ? '"Space Grotesk", system-ui' : '"JetBrains Mono", ui-monospace'}, sans-serif`;
+      const label = n.label.length > 44 ? n.label.slice(0, 43) + '…' : n.label;
+      const x = n.sx + n.r + 6, w = ctx.measureText(label).width, bx = [x - 2, n.sy - 8, x + w + 2, n.sy + 8];
+      if (!strong && boxes.some((q) => bx[0] < q[2] && bx[2] > q[0] && bx[1] < q[3] && bx[3] > q[1])) continue;
+      boxes.push(bx);
+      if (dark) { ctx.fillStyle = 'rgba(5,7,10,.5)'; ctx.fillRect(bx[0], bx[1] + 2, bx[2] - bx[0], 12); }
+      ctx.fillStyle = hub ? col(n.area, Math.min(1, (n.s - .55) * 2.2)) : `rgba(${fgRGB},${Math.min(1, (n.s - .6) * 2.2) * (strong ? 1 : .8)})`;
+      ctx.fillText(label, x, n.sy);
+    }
+    setStatus(thinking);
+  }
+  requestAnimationFrame((t) => { last = t; cx = W / 2; cy = H / 2; frame(t); });
+
+  // ---------- interaction ----------
+  let dragging = false, down = null;
+  function pick(x, y) {
+    let best = null, bestS = Infinity;
+    // The nearest dot under the pointer (front-most on ties); tiny move dots need a closer aim.
+    for (const n of S.nodes) {
+      if (!visible(n)) continue;
+      const d = Math.hypot(n.sx - x, n.sy - y), reach = n.kind === 'move' ? 5 : Math.max(10, (n.r || 4) + 4);
+      const score = d - n.s * 2;
+      if (d < reach && (best === null || score < bestS)) { best = n; bestS = score; }
+    }
+    return best;
+  }
+  cv.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY, yaw, pitch, moved: false }; cv.setPointerCapture(e.pointerId); });
+  cv.addEventListener('pointermove', (e) => {
+    const r = cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+    if (down) {
+      const dx = e.clientX - down.x, dy = e.clientY - down.y;
+      if (!down.moved && Math.hypot(dx, dy) > 4) { down.moved = true; dragging = true; cv.classList.add('dragging'); hideTip(); }
+      if (dragging) { yaw = down.yaw + dx * .006; pitch = Math.max(-1.3, Math.min(1.3, down.pitch + dy * .005)); return; }
+    }
+    const n = e.pointerType === 'mouse' ? pick(x, y) : null;
+    if (n !== hovered) { hovered = n; cv.classList.toggle('pointing', !!n); }
+    if (n) showTip(n, x, y); else if (!pinned) hideTip();
+  });
+  function endPointer(e) {
+    if (!down) return; const wasDrag = down.moved; down = null; dragging = false; cv.classList.remove('dragging');
+    if (wasDrag || e.type === 'pointercancel') return;
+    const r = cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top, n = pick(x, y);
+    pinned = n && n !== pinned ? n : null; if (pinned) showTip(pinned, x, y); else hideTip();
+  }
+  cv.addEventListener('pointerup', endPointer); cv.addEventListener('pointercancel', endPointer);
+  cv.addEventListener('pointerleave', () => { if (!down) { hovered = null; if (!pinned) hideTip(); } });
+  cv.addEventListener('wheel', (e) => { e.preventDefault(); zoom = Math.max(.5, Math.min(4, zoom * Math.exp(-e.deltaY * .0012))); }, { passive: false });
+  addEventListener('keydown', (e) => { if (e.key === 'Escape') { pinned = null; hideTip(); S.isolate = null; renderLegend(); } });
+
+  // ---------- HUD ----------
+  const el = (tag, attrs = {}, text) => { const e = document.createElement(tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (text != null) e.textContent = text; return e; };
+  const dot = (area) => { const i = el('i'); i.style.background = col(area); return i; };
+  const KIND = { move: 'Move', tool: 'Tool', core: 'Mind', area: 'Brain area', organ: 'Organ', behaviour: 'Behaviour', animation: 'Learned animation', memory: 'Memory', persona: 'Persona', life: 'Life plan', character: 'Character', 'character-away': 'Character (away)', place: 'Place', dream: 'Daydream', dreams: 'Dream journal',
+    moves: 'Move library', inner: 'Inner life', identity: 'Soul', need: 'Need', emotion: 'Feeling', plan: 'Living now', room: 'Room', 'room-here': 'Room (here now)', thing: 'Thing she noticed' };
+  const tip = $('#tip');
+  function showTip(n, x, y) {
+    tip.replaceChildren();
+    const area = S.areas.find((a) => a.id === n.area);
+    const k = el('div', { class: 'k' }); k.append(dot(n.area), document.createTextNode(`${KIND[n.kind] || n.kind} · ${area ? area.label : n.area}`));
+    tip.append(k, el('h3', {}, n.label));
+    if (n.note) tip.append(el('p', {}, n.note));
+    tip.hidden = false;
+    tip.style.left = Math.min(W - tip.offsetWidth - 12, x + 16) + 'px';
+    tip.style.top = Math.max(12, Math.min(H - tip.offsetHeight - 12, y + 14)) + 'px';
+  }
+  function hideTip() { tip.hidden = true; }
+  function renderLegend() {
+    const lg = $('#legend'); lg.replaceChildren();
+    for (const a of S.areas) {
+      const count = S.nodes.filter((n) => n.area === a.id && n.kind !== 'area' && n.id !== 'mind').length;
+      const b = el('button', { 'aria-pressed': String(!S.isolate || S.isolate === a.id), id: 'lg-' + a.id, title: a.about });
+      b.append(dot(a.id), document.createTextNode(a.label)); if (a.id !== 'mind') b.append(el('span', {}, String(count)));
+      b.addEventListener('click', () => { S.isolate = S.isolate === a.id || a.id === 'mind' ? null : a.id; renderLegend(); });
+      lg.append(b);
+    }
+  }
+  function renderCounts() {
+    const n = (k) => S.nodes.filter((x) => k.includes(x.kind)).length;
+    $('#counts').textContent = `${n(['move'])} moves · ${n(['tool'])} tools · ${n(['animation'])} learned · ${n(['behaviour'])} behaviours · ${n(['memory'])} memories · ${n(['room', 'room-here'])} rooms · ${n(['thing'])} things · ${n(['place'])} places · ${n(['character', 'character-away'])} characters`;
+  }
+  let statusKey = '';
+  function setStatus(thinking) {
+    const dreaming = streamUp && S.away != null;
+    const state = !streamUp ? 'off' : thinking ? (dreaming ? 'dream' : 'think') : dreaming ? 'dream' : 'live';
+    const text = !streamUp ? 'Brain offline' : dreaming ? `Dreaming · phone away ${Math.max(1, Math.round(S.away / 60000))} min` : thinking ? 'Thinking' : S.connected ? 'Live · phone connected' : 'Live · waiting for the phone';
+    if (state + text === statusKey) return; statusKey = state + text;
+    const s = $('#status'); s.dataset.state = state; s.querySelector('span').textContent = text;
+  }
+  const AREA_VERB = { senses: 'sensed', voice: 'said', body: 'moved', skills: 'skill', memory: 'memory', space: 'space', helpers: 'helper', characters: 'character', mind: 'mind' };
+  function feedItem(a) {
+    if (a.kind === 'result' && a.ok) return;      // the call itself is already listed
+    const feed = $('#feed'), it = el('div', { class: 'item' + (a.kind === 'error' ? ' err' : '') });
+    const what = el('div', { class: 'what' }, a.kind === 'wake' ? `Woke: ${a.label}` : a.label);
+    if (a.detail) what.append(el('small', {}, a.detail));
+    const t = new Date(a.t);
+    it.append(dot(a.kind === 'error' ? 'helpers' : a.area), what, el('time', {}, t.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })));
+    feed.insertBefore(it, feed.children[1] || null);
+    while (feed.children.length > 26) feed.lastChild.remove();
+  }
+  let captionTimer = null;
+  function caption(kind, text) {
+    $('#captionKind').textContent = kind; $('#captionText').textContent = text; $('#caption').hidden = false;
+    clearTimeout(captionTimer); captionTimer = setTimeout(() => ($('#caption').hidden = true), 9000);
+  }
+
+  // ---------- data ----------
+  let streamUp = false, refetchTimer = null;
+  async function loadGraph() {
+    try {
+      const g = await (await fetch('/graph', { cache: 'no-store' })).json();
+      S.connected = g.connected; S.phone = g.device;
+      setGraph(g);
+      if (!S.fedRecent) { S.fedRecent = true; (g.recent || []).forEach(feedItem); }
+    } catch (e) {
+      console.error(e);
+      $('#emptyTitle').textContent = 'The brain is offline'; $('#emptyText').textContent = 'Start /soul in Claude Code; this page reconnects by itself.';
+      $('#empty').hidden = S.nodes.length > 0;
+    }
+  }
+  function refetchSoon() { clearTimeout(refetchTimer); refetchTimer = setTimeout(loadGraph, 400); }
+  function connect() {
+    const es = new EventSource('/events');
+    es.onopen = () => { streamUp = true; loadGraph(); };
+    es.onerror = () => { streamUp = false; };
+    es.onmessage = (m) => {
+      let a; try { a = JSON.parse(m.data); } catch { return; }
+      fire(a); feedItem(a);
+      if (a.kind === 'event' && a.node === 'sense:speech') caption('Heard', a.label);
+      if (a.kind === 'tool' && a.label.startsWith('say ')) caption('She says', a.label.replace(/^say \w+: /, ''));
+      if (a.grew || (a.kind === 'event' && /connected|placed/.test(a.label)) || /^(feel|create_soul|live|name_room|mark_thing)\b/.test(a.label)) refetchSoon();
+      if (a.kind === 'tool' && (a.area === 'soul' || /plan \d/.test(a.label))) loadNow();
+      if (a.kind === 'tool' && a.label.startsWith('dream ')) { caption('She dreams', a.label.replace(/^dream \S+: /, '')); refetchSoon(); }
+      if (a.kind === 'event' && a.label === 'The phone connected') S.connected = true;
+    };
+  }
+  // ---------- right now ----------
+  const NEED_HUE = { company: 330, curiosity: 196, boredom: 28, tiredness: 268 };
+  const pctTxt = (v) => Math.round(v * 100) + '%';
+  function bar(label, v, hue) {
+    const b = el('div', { class: 'bar' }), i = el('i'); i.style.width = pctTxt(Math.max(0, Math.min(1, v)));
+    i.style.setProperty('--c', dark ? `hsl(${hue},75%,64%)` : `hsl(${hue},60%,42%)`); b.append(i);
+    return [el('span', {}, label), b, el('em', {}, pctTxt(v))];
+  }
+  function renderNow(d) {
+    S.away = d.away; S.connected = d.connected;
+    const box = $('#nowChars'); box.replaceChildren();
+    for (const c of d.characters || []) {
+      const card = el('div', { class: 'card' });
+      card.style.setProperty('--c', col('soul'));
+      const who = el('div', { class: 'who' }); who.append(el('b', {}, c.name), el('span', {}, c.behavior || ''));
+      card.append(who);
+      if (c.energy) {
+        const bars = el('div', { class: 'bars' }); bars.append(...bar('energy', c.energy.level, 96));
+        for (const [k, v] of Object.entries(c.needs || {})) bars.append(...bar(k, v, NEED_HUE[k] || 200));
+        card.append(bars, el('div', { class: 'energy' }, c.energy.label.replace(/^\w+: /, (m) => m)));
+      }
+      if (c.emotions && c.emotions.length) {
+        const ch = el('div', { class: 'chips' });
+        for (const e of c.emotions) { const s = el('span', { title: e.why }, `${e.name} ${pctTxt(e.intensity)}`); s.style.borderColor = col('soul', .5); ch.append(s); }
+        card.append(el('div', { class: 'lbl' }, 'Feels'), ch);
+      }
+      if (d.away != null && c.dreams && c.dreams.length) {
+        card.append(el('div', { class: 'lbl' }, 'Dreaming'), el('div', { class: 'dreamtext' }, c.dreams[c.dreams.length - 1].text));
+      } else if (d.away != null) {
+        card.append(el('div', { class: 'lbl' }, 'Drifting into a daydream…'));
+      }
+      if (c.plan) {
+        card.append(el('div', { class: 'lbl' }, 'Living: ' + c.plan.note));
+        const ol = el('ol', { class: 'steps' });
+        c.plan.steps.forEach((s, i) => ol.append(el('li', { class: i < c.plan.step ? 'done' : i === c.plan.step ? 'on' : '' }, s)));
+        card.append(ol);
+      } else if (c.recent && c.recent.length) {
+        card.append(el('div', { class: 'lbl' }, 'Lately'));
+        const ol = el('ol', { class: 'steps' });
+        c.recent.slice().reverse().forEach((r) => ol.append(el('li', {}, r.what)));
+        card.append(ol);
+      }
+      box.append(card);
+    }
+    const sys = $('#nowSys'); sys.replaceChildren();
+    const ears = d.ears.pref === 'apple' ? 'Apple dictation' : d.ears.pref === 'whisper-large' ? 'Whisper large' : 'Whisper small';
+    const voice = d.voice.pref.startsWith('kokoro:') ? 'Kokoro ' + d.voice.pref.slice(7) + (d.voice.ready ? '' : ' (warming up)') : 'Apple voice';
+    for (const [k, v] of [['Hearing', ears + (d.ears.status ? ' · ' + d.ears.status : '')], ['Voice', voice], ['Room', d.room || 'not saved yet'], ['People', d.people ? `${d.people} in view` : 'none in view']])
+      sys.append(el('dt', {}, k), el('dd', {}, v));
+    $('#now').hidden = !d.connected && !(d.characters || []).length;
+  }
+  async function loadNow() {
+    try { renderNow(await (await fetch('/now', { cache: 'no-store' })).json()); } catch { $('#now').hidden = true; }
+  }
+  setInterval(loadNow, 2000); loadNow();
+  loadMoves();
+  $('#find').addEventListener('input', (e) => { S.query = e.target.value.trim().toLowerCase(); });
+  $('#find').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.target.value = ''; S.query = ''; e.target.blur(); } });
+  setInterval(loadGraph, 8000);  // needs, feelings, plans, rooms and characters in the room
+  loadGraph();
+  connect();
+})();
+</script>
+</body>
+</html>

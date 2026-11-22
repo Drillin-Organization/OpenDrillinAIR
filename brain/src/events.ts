@@ -1,0 +1,707 @@
+// Events from the phone, queued until the mind (a Claude Code chat) asks
+// for them with wait_for_events. Some events wake the mind; the rest ride
+// along as "meanwhile" notes. After a few quiet minutes an "idle" beat wakes
+// it so characters keep living; after a long gap the next wake says how long
+// the user was away (lazy catch-up).
+import type { Body, BodyEvent } from "./body.js";
+import { bearing, facingUser, fromUser } from "./space.js";
+import type { Life } from "./life.js";
+import * as soul from "./soul.js";
+import * as world from "./world.js";
+import { suggest as suggestMoves } from "./moves.js";
+import { react } from "./reflexes.js";
+import * as store from "./store.js";
+import { characterNode, emitActivity, moveNode } from "./ui.js";
+import * as moves from "./moves.js";
+import { allComposed } from "./compose.js";
+
+const WAKING = new Set(["user_text", "button", "character_tap", "character_placed", "behavior_error", "walk_stuck", "connected"]);
+/// Free time: after this long without the user interacting, she's woken to
+/// live on her own, and again after each gap while it lasts (gaps grow if the
+/// user stays away for long, so an app left open doesn't churn).
+const FREE_AFTER_MS = Number(process.env.BRAIN_FREE_AFTER_S ?? 10) * 1000;
+function freeGapMs(quietMs: number, ignored: number): number {
+  // Free-time wakes the mind lets pass back off (5, 10, 20, 40 s …), so an
+  // unanswered prompt never turns into spam.
+  const base = quietMs > 30 * 60_000 ? 60_000 : quietMs > 10 * 60_000 ? 20_000 : 5_000;
+  return Math.min(120_000, base * 2 ** Math.min(4, ignored));
+}
+const RETURN_GAP_MS = Number(process.env.BRAIN_RETURN_GAP_MIN ?? 20) * 60_000;
+/// Dreaming: while the phone is away (disconnected, locked, nobody placed)
+/// she keeps living in her head. Away counts after this long without a live
+/// scene; dreams come on a rhythm that slows the longer the phone is gone.
+/// Away this long and back: she greets the user.
+const GREET_AFTER_MS = Number(process.env.BRAIN_GREET_AFTER_S ?? 180) * 1000;
+const AWAY_AFTER_MS = Number(process.env.BRAIN_AWAY_AFTER_S ?? 15) * 1000;
+function dreamGapMs(awayMs: number, ignored: number): number {
+  const base = awayMs > 60 * 60_000 ? 300_000 : awayMs > 10 * 60_000 ? 120_000 : Number(process.env.BRAIN_DREAM_GAP_S ?? 45) * 1000;
+  return Math.min(900_000, base * 2 ** Math.min(3, ignored));
+}
+/// Time of day as she feels it.
+export function dayPart(d = new Date()): { part: string; hint: string } {
+  const h = d.getHours();
+  if (h >= 5 && h < 9) return { part: "early morning", hint: "waking up slowly, fresh, maybe a stretch" };
+  if (h >= 9 && h < 12) return { part: "morning", hint: "awake and up for things" };
+  if (h >= 12 && h < 17) return { part: "afternoon", hint: "her liveliest stretch of the day" };
+  if (h >= 17 && h < 22) return { part: "evening", hint: "winding down, cosy, chatty" };
+  return { part: "night", hint: "sleepy and quiet; soft voice, slow moves, maybe lying down" };
+}
+/// Learned from when the phone shows her: the hours the user is usually around.
+export function usualHours(sessions: Array<{ start: number; end: number }>): string {
+  const since = Date.now() - 21 * 86_400_000;
+  const days = new Map<number, Set<string>>();
+  const active = new Set<string>();
+  for (const s of sessions) {
+    if (s.end < since) continue;
+    for (let t = Math.max(s.start, since); t < s.end; t += 15 * 60_000) {
+      const d = new Date(t), day = d.toDateString();
+      active.add(day);
+      (days.get(d.getHours()) ?? days.set(d.getHours(), new Set()).get(d.getHours())!).add(day);
+    }
+  }
+  if (active.size < 2) return "";
+  const hours = [...Array(24).keys()].filter((h) => (days.get(h)?.size ?? 0) >= Math.max(2, active.size * 0.3));
+  if (!hours.length) return "";
+  const ranges: string[] = [];
+  let a = hours[0], b = hours[0];
+  for (const h of hours.slice(1).concat(-1)) {
+    if (h === b + 1) { b = h; continue; }
+    ranges.push(`${a}–${b + 1} h`);
+    a = b = h;
+  }
+  return `The user is usually around ${ranges.join(" and ")} (seen on ${active.size} of the last 21 days).`;
+}
+
+const ago = (ms: number) => {
+  const s = Math.round(ms / 1000);
+  return s < 120 ? `${s} s` : s < 7200 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`;
+};
+
+/// Short speech that is still worth waking for ("stop", "come here", "yes").
+const KEEP = new Set(("stop wait come here back sit stand up down jump dance walk run go follow stay look turn hi hello hey bye " +
+  "yes no nope yep sure don't dont thanks thank please help what why where who how name sleep lie kneel wave again more").split(" "));
+const FILLER = new Set(("so ok okay well um uh er hmm mm mhm like the a an and but this that i i'm just oh ah right nice " +
+  "good cool yeah see let's lets check is it's its in of to my me you").split(" "));
+/// Phrases that point at something in the room: a camera picture comes along.
+const POINTING = /\b(there|that one|this one|over|look|see|watch|show|these|those|him|his|friend|door|window|table|sofa|couch|chair|bed|kitchen|outside|thing)\b/i;
+
+/// Whether a phrase heard by speech recognition should wake the mind:
+/// fragments ("So", "Okay, do a", "Galaxy") ride along as meanwhile notes.
+export function worthWaking(text: string, names: string[]): boolean {
+  const words = text.toLowerCase().match(/[a-z']+/g) ?? [];
+  if (words.length === 0) return false;
+  const nameWords = new Set(names.flatMap((n) => n.toLowerCase().match(/[a-z']+/g) ?? []));
+  if (words.some((w) => nameWords.has(w))) return true;
+  if (words.every((w) => FILLER.has(w))) return false;
+  // Cut off mid-sentence ("Okay, do a"): the rest usually follows.
+  if (!/[?!]\s*$/.test(text) && /^(a|an|the|to|of|my|your|and|but|or|with|for)$/.test(words[words.length - 1])) return false;
+  if (words.length >= 3) return true;
+  return words.some((w) => KEEP.has(w));
+}
+
+export class EventHub {
+  private waking: string[] = [];
+  private meanwhile: string[] = [];
+  private waiter: (() => void) | null = null;
+  private lastWake = Date.now();
+  /// When the user last spoke to her (and she answered), typed or tapped.
+  private lastInteraction = Date.now();
+  private speakingUntil = 0;
+  private lastDrift = Date.now();
+  /// Characters introduced to this chat (this brain process).
+  private introducedNow = new Set<string>();
+  /// Her life between interactions (plans the mind writes for her).
+  life: Life | null = null;
+  /// Free-time wakes in a row the mind did nothing with.
+  private ignoredFree = 0;
+  private lastWasFree = false;
+  /// When the phone stopped showing her world (null while it does).
+  private awaySince: number | null = null;
+  private dreamsSinceAway = new Map<string, string[]>();
+  private ignoredDreams = 0;
+  private lastWasDream = false;
+
+  /// The mind did something (any tool but waiting): it's engaged.
+  acted(): void {
+    this.ignoredFree = 0;
+    this.lastWasFree = false;
+    this.ignoredDreams = 0;
+    this.lastWasDream = false;
+  }
+
+  /// Whether the phone is showing her world right now.
+  private present(): boolean {
+    return this.body.connected && Date.now() - this.body.sceneAt < 6000 && (this.body.scene?.characters.length ?? 0) > 0;
+  }
+
+  /// How long the phone has been away (null while it's here or only blinked).
+  awayFor(): number | null {
+    return this.awaySince !== null && Date.now() - this.awaySince >= AWAY_AFTER_MS ? Date.now() - this.awaySince : null;
+  }
+
+  /// The characters of her world: on the phone now, or the last ones it showed.
+  knownCharacters(): Array<{ id: string; name: string; x: number; z: number; yaw: number }> {
+    const live = this.body.scene?.characters ?? [];
+    if (live.length) return live.map(({ id, name, x, z, yaw }) => ({ id, name, x, z, yaw }));
+    if (this.state.known?.characters.length) return this.state.known.characters;
+    return store.characterNames().filter((n) => soul.readProfile(n)).map((n) => ({ id: n, name: n, x: 0, z: 0, yaw: 0 }));
+  }
+
+  knownMap(): string | null {
+    return (this.body.scene?.mapId as string | null) ?? this.state.known?.mapId ?? null;
+  }
+
+  /// She dreamt (the dream tool): kept for when the phone comes back.
+  dreamt(id: string, text: string): void {
+    const list = this.dreamsSinceAway.get(id) ?? [];
+    list.push(text);
+    this.dreamsSinceAway.set(id, list.slice(-6));
+  }
+
+  /// Notices the phone going away and coming back (checked every second).
+  private checkAway(): void {
+    const now = Date.now();
+    if (this.present()) {
+      const p = (this.state.presence ??= []);
+      const last = p[p.length - 1];
+      if (last && now - last.end < 5 * 60_000) last.end = now; else p.push({ start: now, end: now });
+      if (p.length > 200) p.splice(0, p.length - 200);
+      if (now - this.presenceSaved > 30_000) { this.presenceSaved = now; store.saveState(this.state); }
+      if (this.awaySince !== null) {
+        const away = now - this.awaySince;
+        const leftAt = this.awaySince;
+        this.awaySince = null;
+        if (away >= AWAY_AFTER_MS) {
+          const dreams = [...this.dreamsSinceAway].map(([id, d]) => `${id} daydreamed: ${d.map((t) => `“${t}”`).join(" → ")}`);
+          this.dreamsSinceAway.clear();
+          emitActivity({ kind: "event", area: "senses", node: "sense:scene", label: `back from dreaming after ${ago(away)}` });
+          const today = new Date().toDateString();
+          const firstToday = !p.some((s) => s.start < leftAt && new Date(leftAt).toDateString() === today && new Date(Math.min(s.end, leftAt)).toDateString() === today);
+          const { part } = dayPart();
+          const greet = away >= GREET_AFTER_MS
+            ? ` The user is back${firstToday ? ` for the first time today (${part})` : ""}: let her notice and greet them her way, as warmly as ${ago(away)} away and your relationship call for (a few minutes: a glance or smile; hours: a real welcome; ${part}: fitting words).`
+            : "";
+          this.push(away >= GREET_AFTER_MS, `The phone is back after ${ago(away)} away.${greet} ${dreams.length ? dreams.join(" ") + " Let her carry on from where her mind wandered (maybe do or mention what she dreamt of)." : ""}`.trim());
+        }
+      }
+      return;
+    }
+    if (this.awaySince === null) { this.awaySince = now; return; }
+    if (now - this.awaySince >= AWAY_AFTER_MS && !this.awayAnnounced) {
+      this.awayAnnounced = true;
+      this.life?.cancelAll("the phone is away");
+      emitActivity({ kind: "event", area: "soul", label: "The phone is away: she drifts into daydreams" });
+    }
+    // Her needs keep drifting while she dreams.
+    const dt = Math.min(10_000, now - this.lastDrift);
+    this.lastDrift = now;
+    for (const c of this.knownCharacters()) soul.drift(c.id, c, "dreaming", dt);
+  }
+  private awayAnnounced = false;
+  private presenceSaved = 0;
+
+  /// The user is here and doing something: her own plans give way.
+  private userIsHere(): void {
+    this.lastInteraction = Date.now();
+    this.life?.cancelAll("the user is interacting");
+  }
+
+  /// Something the runner or a sense wants the mind to see now.
+  wakeWith(line: string, image?: string): void {
+    if (image) this.images.push(image);
+    this.push(true, line);
+  }
+  /// When the last phrase meant for her was heard.
+  private heardAt = 0;
+
+  /// She answered something the user said: that was a real exchange.
+  answered(id?: string): void {
+    if (Date.now() - this.heardAt < 20_000) {
+      this.lastInteraction = Date.now();
+      if (id) {
+        soul.talkedTo(id);
+        const name = this.body.characterName(id);
+        if (name) soul.exchanged(name);
+      }
+    }
+  }
+  /// When she last started something with the user herself.
+  private lastInitiative = 0;
+  private returnGap: number | null = null;
+  private state = store.loadState();
+  /// Camera pictures taken for pointing phrases, delivered with the next wake.
+  private images: string[] = [];
+  /// What the last wake's scene said, so unchanged parts aren't repeated.
+  private lastScene: Record<string, string> = {};
+  /// "c1:walk" — behaviours the mind wants to hear about when they finish.
+  readonly notify = new Map<string, number>();
+
+  /// Wake the mind when this character's behaviour ends, however it ends.
+  watch(id: string, behavior: string): void {
+    this.notify.set(`${id}:${behavior}`, Date.now());
+  }
+
+  constructor(private body: Body) {
+    body.on("hello", () => this.onHello());
+    body.on("event", (e: BodyEvent) => this.onEvent(e));
+    body.on("scene", () => {
+      this.checkWatched();
+      // Her needs drift with time and what she's doing.
+      const now = Date.now();
+      const dt = Math.min(10_000, now - this.lastDrift);
+      this.lastDrift = now;
+      for (const c of this.body.scene?.characters ?? []) {
+        soul.drift(c.id, c, c.behavior, dt);
+        world.track(c.id, c.x, c.z);
+      }
+      this.awayAnnounced = false;
+      this.rememberWorld();
+    });
+    setInterval(() => this.checkAway(), 1000).unref();
+    // Someone started talking (ears): hold free time for a few seconds, but
+    // noise, music or her own voice must not keep resetting the clock.
+    body.on("user_activity", () => { this.speakingUntil = Date.now() + 4000; });
+    // The user talked over her: she stopped mid-sentence.
+    body.on("barge", (heard: string) => {
+      this.life?.cancelAll("the user is talking");
+      emitActivity({ kind: "event", area: "voice", node: "voice:say", label: `she stops talking: the user talks over her (“${heard}”)` });
+      this.push(false, `She stopped mid-sentence because the user started talking over her (it began “${heard}”). Listen; don't finish the old line unless they want it.`);
+    });
+    body.on("disconnected", () => {
+      this.seen();
+      emitActivity({ kind: "error", area: "senses", label: "The phone disconnected" });
+      this.push(false, "The phone disconnected.");
+    });
+  }
+
+  private async onHello(): Promise<void> {
+    const r = await this.body.pushBehaviors(store.behaviorFiles());
+    const made = allComposed();
+    if (made.length) void this.body.pushMoves(made);
+    const errors: string[] = r.data?.errors ?? [];
+    log(`phone connected (${this.body.device}); behaviours ${errors.length ? "with errors: " + errors.join("; ") : "loaded"}`);
+    emitActivity({ kind: "event", area: "senses", node: "sense:scene", label: "The phone connected", detail: this.body.device });
+    const gap = this.state.lastSeen ? Date.now() - this.state.lastSeen : null;
+    this.returnGap = gap !== null && gap > RETURN_GAP_MS ? gap : null;
+    this.seen();
+    // Give the phone a moment to report its scene.
+    setTimeout(() => this.push(true, `The phone connected (${this.body.device}).`), 2500);
+  }
+
+  private onEvent(e: BodyEvent): void {
+    this.seen();
+    // A move started on the phone (any source): light that exact move, nothing for the mind.
+    if (e.kind === "move_played") {
+      const name = String(e.data.name ?? "");
+      emitActivity({ kind: "event", area: "skills", node: moveNode(name), label: `${e.data.character} moves: ${moves.inLibrary(name)?.desc ?? name.replace(/_/g, " ")}`, detail: `${name} · ${e.data.seconds} s`, hold: Number(e.data.seconds) || 3 });
+      return;
+    }
+    // Taps, buttons and typing are the user for sure; speech only once it
+    // turns out to be meant for her (below), not every noise the mic picks up.
+    if (e.kind === "button" || e.kind === "character_tap" || (e.kind === "user_text" && !e.data.speech)) this.userIsHere();
+    const line = `${e.kind} ${JSON.stringify(e.data)}`;
+    const ch = characterNode(this.body, e.data.character as string | undefined);
+    switch (e.kind) {
+      case "user_text":
+        emitActivity({ kind: "event", area: "senses", node: e.data.speech ? "sense:speech" : "sense:touch", label: `“${String(e.data.text ?? "")}”` });
+        break;
+      case "character_tap": case "button":
+        emitActivity({ kind: "event", area: "senses", node: "sense:touch", label: e.kind === "button" ? `button ${e.data.label}` : "tap on a character" });
+        break;
+      case "character_placed":
+        emitActivity({ kind: "event", area: "characters", node: ch, label: `${e.data.name} placed`, grew: true });
+        break;
+      case "person_seen":
+        emitActivity({ kind: "event", area: "senses", node: "sense:people", label: "someone else came into view" });
+        break;
+      case "walk_stuck":
+        emitActivity({ kind: "error", area: "body", node: "behavior:walk", label: `${String(e.data.character ?? "")} got stuck walking` });
+        break;
+      case "behavior_error":
+        emitActivity({ kind: "error", area: "body", node: `behavior:${e.data.behavior}`, label: `${e.data.behavior} failed`, detail: String(e.data.error ?? "") });
+        break;
+      default:
+        emitActivity({ kind: "event", area: e.kind === "arrived" || e.kind === "behavior_done" ? "body" : "senses", node: e.data.behavior ? `behavior:${e.data.behavior}` : ch, label: e.kind.replace(/_/g, " ") });
+    }
+    log(`event ${line}`);
+    if (e.kind === "room") {
+      const info = e.data as { mapId?: string; status: string };
+      if (info.status === "saved" && info.mapId) world.adoptUnsaved(info.mapId, store.readPlaces, store.writePlaces);
+      const places = info.mapId ? store.readPlaces(info.mapId) : {};
+      emitActivity({ kind: "event", area: "space", node: "space:map", label: `room: ${info.status}`, grew: info.status !== "new" });
+      this.push(true, world.roomEvent(info, places));
+      return;
+    }
+    if (e.kind === "user_text") {
+      const spoken = e.data.speech === true;
+      const said = String(e.data.text ?? "");
+      const names = (this.body.scene?.characters ?? []).map((c) => c.name);
+      if (spoken && worthWaking(said, names)) {
+        this.heardAt = Date.now();
+        this.life?.cancelAll("the user is talking");
+      }
+      if (spoken && !worthWaking(said, names)) {
+        this.push(false, `Heard in passing (didn't wake you): "${said}"`);
+        return;
+      }
+      const tone = e.data.tone ? ` (said ${e.data.tone})` : "";
+      for (const c of this.body.scene?.characters ?? []) soul.logTalk(c.name, "user", `${said}${tone}`);
+      const line = spoken
+        ? `Heard (speech recognition, may contain errors or be talk not meant for her): "${said}"${tone}`
+        : `The user types: "${said}"`;
+      void (async () => {
+        // Fast mind: clear everyday requests start at once, before the mind thinks.
+        const reflex = this.body.connected ? await react(this.body, said).catch(() => null) : null;
+        const full = reflex ? `${line}\n${reflex}` : line;
+        if (POINTING.test(said) && this.body.connected) {
+          // Look first, so the mind doesn't need a separate snapshot round trip.
+          const r = await this.body.command("snapshot", { longSide: 640 }, 4000);
+          if (r.ok && r.data?.jpeg) this.images.push(r.data.jpeg as string);
+          this.push(true, full + (r.ok ? "\n(The camera picture from that moment is attached.)" : ""));
+        } else {
+          this.push(true, full);
+        }
+      })();
+    } else if (e.kind === "behavior_done") {
+      const key = `${e.data.character}:${e.data.behavior}`;
+      // Steps of her own plan finishing are the plan's business.
+      if (this.life?.running(String(e.data.character)) && !this.notify.has(key)) return;
+      this.push(this.notify.delete(key), `Finished: ${line}`);
+    } else {
+      // Her own plan handles a stuck walk itself.
+      const inPlan = e.kind === "walk_stuck" && this.life?.running(String(e.data.character));
+      this.push(WAKING.has(e.kind) && !inPlan, line);
+    }
+  }
+
+  /// A watched behaviour that stopped without saying so (replaced, failed
+  /// quietly, or the character was removed) still wakes the mind.
+  private checkWatched(): void {
+    const chars = this.body.scene?.characters ?? [];
+    for (const [key, since] of this.notify) {
+      if (Date.now() - since < 2500) continue;
+      const [id, behavior] = key.split(":");
+      const c = chars.find((x) => x.id === id);
+      if (c && c.behavior === behavior) continue;
+      this.notify.delete(key);
+      this.push(true, c
+        ? `Stopped: ${id}'s ${behavior} ended without finishing (she's now ${c.behavior} at x ${c.x.toFixed(2)}, z ${c.z.toFixed(2)}).`
+        : `Stopped: ${id}'s ${behavior} ended (she's no longer in the scene).`);
+    }
+  }
+
+  private push(wakes: boolean, line: string): void {
+    (wakes ? this.waking : this.meanwhile).push(line);
+    if (this.meanwhile.length > 40) this.meanwhile.splice(0, this.meanwhile.length - 40);
+    if (wakes) this.waiter?.();
+  }
+
+  private worldSaved = 0;
+  /// Keeps her world (characters, room) for when the phone is away, even across brain restarts.
+  private rememberWorld(): void {
+    const chars = this.body.scene?.characters ?? [];
+    if (!chars.length || Date.now() - this.worldSaved < 20_000) return;
+    this.worldSaved = Date.now();
+    const r1 = (v: number) => Math.round(v * 10) / 10;
+    this.state.known = { mapId: (this.body.scene?.mapId as string | null) ?? null, characters: chars.map(({ id, name, x, z, yaw }) => ({ id, name, x: r1(x), z: r1(z), yaw: r1(yaw) })) };
+    store.saveState(this.state);
+  }
+
+  private seen(): void {
+    this.state.lastSeen = Date.now();
+    store.saveState(this.state);
+  }
+
+  /// A helper (background subagent) reports back to the main loop.
+  report(text: string): void {
+    emitActivity({ kind: "report", area: "helpers", label: text, grew: true });
+    this.push(true, `Helper report: ${text}`);
+  }
+
+  private waiting = false;
+  get isWaiting(): boolean {
+    return this.waiting;
+  }
+
+  /// Resolves with the wake text once something wakes the mind, free time
+  /// is due, or `timeoutMs` passes (then null).
+  async next(timeoutMs: number): Promise<{ text: string; images: string[] } | null> {
+    this.waiting = true;
+    try {
+      return await this.waitForWake(timeoutMs);
+    } finally {
+      this.waiting = false;
+    }
+  }
+
+  private async waitForWake(timeoutMs: number): Promise<{ text: string; images: string[] } | null> {
+    this.body.status(false);
+    const deadline = Date.now() + timeoutMs;
+    while (this.waking.length === 0) {
+      const now = Date.now();
+      const quiet = now - this.lastInteraction;
+      // Only while the phone is live (it stops sending its scene when locked).
+      const present = this.present();
+      // Phone away: she dreams, on a slowing rhythm.
+      const away = this.awayFor();
+      if (away !== null && this.knownCharacters().length) {
+        const dreamAt = Math.max(this.awaySince! + AWAY_AFTER_MS + 5_000, this.lastWake + dreamGapMs(away, this.ignoredDreams));
+        if (now >= dreamAt) {
+          if (this.lastWasDream) this.ignoredDreams++;
+          this.lastWasDream = true;
+          this.waking.push(this.dreamWake(away));
+          break;
+        }
+      }
+      // While she's busy with something you'll be told about, let her finish (up to a minute).
+      const busy = this.notify.size > 0 ? 60_000 : 0;
+      // While she's living a plan, the plan wakes the mind when it ends.
+      const living = this.life?.running() ?? false;
+      const freeAt = living ? Infinity : Math.max(this.lastInteraction + FREE_AFTER_MS, this.lastWake + Math.max(freeGapMs(quiet, this.ignoredFree), busy));
+      // Hold for speech only when the user has been talking to her lately.
+      const talking = now < this.speakingUntil && now - this.heardAt < 20_000;
+      if (present && now >= freeAt && !talking) {
+        const starter = this.initiativeDue(quiet);
+        if (starter) {
+          this.lastInitiative = now;
+          this.waking.push(starter);
+          break;
+        }
+        if (this.lastWasFree) this.ignoredFree++;
+        this.lastWasFree = true;
+        this.waking.push(await this.freeTime(quiet));
+        break;
+      }
+      const left = deadline - now;
+      if (left <= 0) return null;
+      await new Promise<void>((resolve) => {
+        const t = setTimeout(resolve, Math.max(50, Math.min(left, present ? 15_000 : 1_000, present && freeAt !== Infinity ? freeAt - now : 15_000)));
+        this.waiter = () => {
+          clearTimeout(t);
+          resolve();
+        };
+      });
+      this.waiter = null;
+    }
+    this.lastWake = Date.now();
+    this.body.status(true);
+    const batch = this.waking.splice(0);
+    emitActivity({ kind: "wake", area: "mind", node: /^Free time/.test(batch[0] ?? "") ? "mind:free" : /^Dreaming/.test(batch[0] ?? "") ? "mind:dreams" : "mind", label: (batch[0]?.split("\n")[0] ?? "woke up").replace(/^Heard \(speech recognition[^)]*\): /, "Heard: ").slice(0, 120), detail: batch.length > 1 ? `+${batch.length - 1} more` : undefined });
+    return { text: this.compose(batch), images: this.images.splice(0).slice(-2) };
+  }
+
+  /// Sometimes she starts something with the user herself: when she wants
+  /// company, they're in front of her, it's been a while since she last did.
+  private initiativeDue(quietMs: number): string | null {
+    const now = Date.now();
+    if (now - this.lastInitiative < 4 * 60_000 || quietMs < 40_000 || quietMs > 30 * 60_000) return null;
+    const scene = this.body.scene;
+    const u = (scene?.user ?? {}) as Record<string, number>;
+    const user = { x: u.x ?? 0, z: u.z ?? 0, yaw: u.yaw ?? 0 };
+    const c = (scene?.characters ?? []).find((ch) => Math.abs(bearing(user, user.yaw, ch)) < 32 && Math.hypot(ch.x - user.x, ch.z - user.z) < 6);
+    if (!c) return null;
+    const st = soul.innerState(c.id);
+    const want = st.needs.company * 0.6 + st.needs.boredom * 0.3 + (st.emotions[0]?.intensity ?? 0) * 0.2;
+    if (want < 0.45 || Math.random() > want) return null;
+    const { part, hint } = dayPart();
+    const dreams = soul.readDreams(c.name, 2).map((d) => d.text);
+    return [
+      `Initiative: ${c.id} (${c.name}) wants to start something with the user herself (they're in front of her, quiet for ${ago(quietMs)}; she ${st.needs.company > 0.6 ? "misses company" : "is a bit bored"}). It's ${part} (${hint}).`,
+      `Make it hers and specific: show them something she found or dreamt of${dreams.length ? ` (lately: ${dreams.join(" / ")})` : ""}, ask about their day, recall an inside joke, invite them to dance or watch her try a move, share a thought about the room or the time of day. One short line with an action (walk over, gesture), then let them answer. If they don't react, she goes back to her own life without fuss.`,
+      soul.describeBond(c.name),
+    ].join("\n");
+  }
+
+  /// Reflection is due: the main loop hands it to a background helper (a ready brief).
+  private reflectionBrief(): string {
+    const now = Date.now();
+    const lines: string[] = [];
+    for (const c of this.knownCharacters()) {
+      const b = soul.readBond(c.name);
+      const due = b.pending >= (this.awayFor() !== null ? 4 : 12) && now - b.askedReflect > 15 * 60_000;
+      if (!due) continue;
+      b.askedReflect = now;
+      soul.writeBond(c.name, b);
+      lines.push(`Reflection is due for ${c.id} (${c.name}): ${b.pending} new memories, dreams and conversations. Don't do it yourself: start a background helper now (Agent tool, run_in_background, model "sonnet") with this brief, then carry on with this wake:\n> You are ${c.name}'s reflection, working quietly in the background for the Drillin AIR soul. Call soul_review with character "${c.id}". Think about what it adds up to, then: (1) call reflect with 2–5 new insights (higher-level understanding of the user, herself and their life together; not events; don't repeat existing insights); (2) call relate if the relationship moved (small closeness/trust steps, likes, dislikes, an inside joke, a treasured moment); (3) if her life plan should change, call update_life. Never call wait_for_events, say, run_behavior, play_animation or live. Finish with report: "${c.name} reflected: <one line>".`);
+    }
+    return lines.join("\n");
+  }
+
+  /// A dreaming wake: everything she knows of her world, her last dreams, how she feels.
+  private dreamWake(awayMs: number): string {
+    const mapId = this.knownMap();
+    const rooms = world.readRooms();
+    const lines = [
+      `Dreaming (the phone has been away for ${ago(awayMs)}: locked, closed or out of reach. She has no body or voice right now, and that's fine). Her life goes on inside her head. Write what she daydreams with \`dream\`: 1–3 vivid first-person sentences that carry on the thread of her last dream, drawn from the world she has seen (the rooms, things and places below, her memories, who she is, how she feels). She can imagine walking somewhere, rehearsing a dance, wondering about something she noticed, planning what to show the user, remembering a moment, or just drifting. Don't call body tools (walk, say, play, live, run_behavior): they wait for the phone. When it's back you'll be told, and she carries on from where her mind wandered.`,
+    ];
+    const roomNames = Object.entries(rooms).map(([id, r]) => `${r.name || "an unnamed room"}${id === mapId ? " (where she was last)" : ""}`);
+    if (roomNames.length) lines.push(`Rooms she knows: ${roomNames.join(", ")}.`);
+    const things = Object.entries(world.readThings(mapId)).map(([n, t]) => `${n}${t.note ? ` (${t.note})` : ""}`);
+    if (things.length) lines.push(`Things she noticed there: ${things.join("; ")}.`);
+    const places = Object.keys(store.readPlaces(mapId));
+    if (places.length) lines.push(`Places she knows there: ${places.join(", ")}.`);
+    for (const c of this.knownCharacters()) {
+      const dreams = soul.readDreams(c.name, 4);
+      const memories = store.readCharacter(c.name, "memory").split("\n").filter((l) => l.trim()).slice(-4).map((l) => l.replace(/^- /, ""));
+      const e = this.life?.energy(c.id);
+      lines.push([
+        `${c.id} (${c.name}): ${soul.describeInner(c.id)}${e ? `; energy ${e.level} (${e.label.split(":")[0]})` : ""}.`,
+        `Before the phone went away: ${this.life?.history(c.id) ?? "nothing recorded"}.`,
+        dreams.length ? `Her last dreams (continue the thread, don't repeat): ${dreams.map((d) => `[${ago(Date.now() - d.at)} ago] ${d.text}`).join(" · ")}` : "This is her first daydream.",
+        memories.length ? `Recent memories: ${memories.join("; ")}.` : "",
+        soul.readInsights(c.name, 5).length ? `What she has come to understand: ${soul.readInsights(c.name, 5).join("; ")}.` : "",
+        soul.describeBond(c.name),
+      ].filter(Boolean).join(" "));
+    }
+    if (this.ignoredDreams > 0) lines.push("(You let the last dream pass. Her mind doesn't stop: give her a thought.)");
+    return lines.join("\n");
+  }
+
+  /// A free-time wake with what she needs to choose well: her energy, what
+  /// she did lately, places and things near her, the moves she knows.
+  private async freeTime(quietMs: number): Promise<string> {
+    const secs = Math.round(quietMs / 1000);
+    const quiet = secs < 120 ? `${secs} s` : `${Math.round(secs / 60)} min`;
+    const scene = this.body.scene;
+    const moves = Object.keys(store.behaviorFiles()).filter((n) => n.startsWith("anim_")).map((n) => n.slice(5));
+    const places = Object.entries(store.readPlaces(scene?.mapId as string | null));
+    const lines = [`Free time (the user hasn't interacted for ${quiet}; that's normal, they may be busy or out of view). Her own life goes on: write her next minute or two with \`live\`.`];
+    for (const c of scene?.characters ?? []) {
+      const e = this.life?.energy(c.id);
+      const near = (p: { x: number; z: number }) => Math.hypot(p.x - c.x, p.z - c.z);
+      const things = (scene?.planes as Array<Record<string, any>> ?? [])
+        .filter((p) => ["seat", "table", "window", "door", "bed", "surface"].includes(p.kind))
+        .map((p) => ({ kind: p.kind, d: near(p as any), x: Math.round(p.x * 10) / 10, z: Math.round(p.z * 10) / 10 }))
+        .sort((a, b) => a.d - b.d).slice(0, 6)
+        .map((p) => `${p.kind} ${p.d.toFixed(1)} m away (x ${p.x}, z ${p.z})${p.kind === "seat" || p.kind === "bed" ? " — sit_on works here" : ""}`);
+      const history = this.life?.history(c.id) ?? "";
+      const unvisited = places.filter(([n]) => !history.includes(n)).map(([n, p]) => `${n} (${near(p).toFixed(1)} m)`);
+      const known = Object.entries(world.readThings(scene?.mapId as string | null))
+        .sort((a, b) => a[1].visits - b[1].visits).slice(0, 6)
+        .map(([n, t]) => `${n} (${near(t).toFixed(1)} m ${world.towards(c, t)}${t.visits ? `, been there ${t.visits}×` : ", not been to yet"})`);
+      const fresh = await world.unexplored(this.body, c.id, c).catch(() => [] as string[]);
+      const ideas = suggestMoves(e?.level ?? 0.5, history).map((m) => `${m.name} (${m.desc}, ${m.seconds} s)`);
+      lines.push([
+        `${c.id} (${c.name}): energy ${e?.level} — ${e?.label}; ${soul.describeInner(c.id)}.`,
+        `Lately: ${history}.`,
+        unvisited.length ? `Places she hasn't been to lately: ${unvisited.join(", ")}.` : "",
+        known.length ? `Things she has noticed in this home: ${known.join("; ")}.` : "",
+        fresh.length ? `Parts of the room she hasn't explored yet: ${fresh.join("; ")}.` : "",
+        things.length ? `Furniture near her: ${things.join("; ")}.` : "",
+        ideas.length ? `Moves from her library that fit her energy right now: ${ideas.join("; ")}.` : "",
+        `Her own made moves: ${moves.join(", ") || "none yet"}. Find more with find_moves.`,
+        soul.readInsights(c.name, 4).length ? `What she has come to understand: ${soul.readInsights(c.name, 4).join("; ")}.` : "",
+      ].filter(Boolean).join(" "));
+    }
+    if (this.ignoredFree > 0) lines.push("(You let the last free time pass. She doesn't wait for anyone: give her something to live.)");
+    return lines.join("\n");
+  }
+
+  private compose(events: string[]): string {
+    const scene = this.body.scene;
+    const { part, hint } = dayPart();
+    const routine = usualHours(this.state.presence ?? []);
+    const parts: string[] = [`Time: ${new Date().toString()} — ${part} (${hint}).${routine ? ` ${routine}` : ""}`];
+    const brief = this.reflectionBrief();
+    if (brief) events = [...events, brief];
+    if (this.returnGap) {
+      const hours = this.returnGap / 3_600_000;
+      parts.push(
+        `The user is back after ${hours >= 1 ? hours.toFixed(1) + " hours" : Math.round(hours * 60) + " minutes"} away. ` +
+          "Decide what each character did meanwhile (true to her persona and life plan), let it show, and update her life plan.",
+      );
+      this.returnGap = null;
+    }
+    const away = this.awayFor();
+    if (away !== null) parts.push(`The phone is away (${ago(away)}): she's dreaming; body tools wait for it.`);
+    for (const c of scene?.characters?.length ? scene.characters : this.knownCharacters()) {
+      // Once per chat (each new chat needs to know who she is).
+      if (this.introducedNow.has(c.name)) continue;
+      this.introducedNow.add(c.name);
+      if (!this.state.introduced.includes(c.name)) this.state.introduced.push(c.name);
+      parts.push(introduce(c.id, c.name));
+    }
+    store.saveState(this.state);
+    parts.push(...events);
+    if (this.meanwhile.length) parts.push(`Meanwhile:\n${this.meanwhile.splice(0).map((l) => `- ${l}`).join("\n")}`);
+    if (away !== null) {
+      // The phone isn't showing her world: no stale positions; resend it all on return.
+      this.lastScene = {};
+      parts.push(`Scene: the phone is away. Last seen: ${this.knownCharacters().map((c) => `${c.id} (${c.name})`).join(", ") || "nobody"} in ${world.readRooms()[this.knownMap() ?? ""]?.name || "an unnamed room"}.`);
+    } else {
+      parts.push(`Scene: ${this.sceneDiff()}`);
+    }
+    return parts.join("\n\n");
+  }
+
+  /// The scene for a wake: characters and the user always; the room parts
+  /// (planes, places, props, behaviours, map) only when they changed.
+  private sceneDiff(): string {
+    const full = compactScene(this.body);
+    if (typeof full !== "object" || full === null) return JSON.stringify(full);
+    const out: Record<string, unknown> = {};
+    const same: string[] = [];
+    for (const [k, v] of Object.entries(full as Record<string, unknown>)) {
+      if (k === "note") continue;
+      const json = JSON.stringify(v);
+      if (k === "user" || k === "characters" || this.lastScene[k] !== json) out[k] = v;
+      else same.push(k);
+      this.lastScene[k] = json;
+    }
+    if (same.length) out.unchanged = same.join(", ");
+    return JSON.stringify(out);
+  }
+}
+
+export function introduce(id: string, name: string): string {
+  const profile = soul.readProfile(name);
+  const persona = store.readCharacter(name, "persona");
+  const memory = store.readCharacter(name, "memory");
+  const life = store.readCharacter(name, "life");
+  if (!profile) {
+    // Born from a random seed (or grown from what we already know of her).
+    const known = [persona && `What you already know of her:\n${persona}`, memory && `Memories:\n${memory}`].filter(Boolean).join("\n");
+    return [`${id} is "${name}" and doesn't have a full soul yet. Build her one now with create_soul: a coherent, specific, surprising person, as rich as a character in a good novel${known ? ", true to what you already know" : ""}. Seed for who she is (use it, make it hers): ${soul.seed()}`, known].filter(Boolean).join("\n");
+  }
+  const insights = soul.readInsights(name, 12);
+  return [`${id} is "${name}". Her soul:\n${soul.describeProfile(profile)}`, soul.describeBond(name), insights.length && `What she has come to understand:\n${insights.map((i) => `- ${i}`).join("\n")}`, memory && `Memories:\n${memory}`, life && `Life plan:\n${life}`]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function compactScene(body: Body): unknown {
+  const scene = body.scene;
+  if (!scene) return body.connected ? "no scene yet" : "phone not connected";
+  const u = scene.user as Record<string, number>;
+  const user = { x: u.x ?? 0, z: u.z ?? 0, yaw: u.yaw ?? 0 };
+  const places = store.readPlaces(scene.mapId as string | null);
+  const r2 = (v: number) => Math.round(v * 100) / 100;
+  return {
+    note: "fromUser: distance and direction as the user sees it (left/right = the user's left/right). Coordinates are for tools.",
+    user: { x: r2(user.x), z: r2(user.z), yaw: r2(user.yaw) },
+    characters: scene.characters.map(({ id, name, x, z, yaw, behavior, selected, canWalk }) => ({
+      id, name, behavior, selected, canWalk,
+      // On the user's screen right now (roughly inside the camera's view).
+      onScreen: Math.abs(bearing(user, user.yaw, { x, z })) < 32,
+      inner: soul.describeInner(id),
+      fromUser: fromUser(user, { x, z }),
+      stance: facingUser({ x, z, yaw }, user),
+      x: r2(x), z: r2(z), yaw: r2(yaw),
+    })),
+    places: Object.entries(places).map(([name, p]) => ({ name, fromUser: fromUser(user, p), x: r2(p.x), z: r2(p.z) })),
+    things: Object.entries(world.readThings(scene.mapId as string | null)).map(([name, t]) => ({ name, kind: t.kind, x: r2(t.x), z: r2(t.z) })),
+    // Other people the camera sees in the room right now (not the user: they hold the phone).
+    people: ((scene.people as Array<{ x: number; z: number }>) ?? []).map((p) => ({ fromUser: fromUser(user, p), x: r2(p.x), z: r2(p.z) })),
+    planes: (scene.planes as Array<Record<string, any>>)
+      .filter((p) => p.kind !== "ceiling")
+      .map((p) => ({ id: p.id, kind: p.kind, size: `${Number(p.w).toFixed(1)}×${Number(p.d).toFixed(1)} m`, x: Math.round(p.x * 10) / 10, z: Math.round(p.z * 10) / 10 })),
+    props: scene.props,
+    behaviors: scene.behaviors,
+    room: scene.mapId ? (world.readRooms()[scene.mapId as string]?.name || `unnamed room (map ${String(scene.mapId).slice(0, 8)})`) : "not saved yet (saved automatically soon)",
+  };
+}
+
+/// Logs go to stderr: stdout is the MCP channel.
+export function log(line: string): void {
+  process.stderr.write(`[brain] ${line}\n`);
+}

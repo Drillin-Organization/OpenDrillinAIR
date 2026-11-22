@@ -1,0 +1,6 @@
+{
+  "enabledMcpjsonServers": ["drillin-body"],
+  "permissions": {
+    "allow": ["mcp__drillin-body__*"]
+  }
+}

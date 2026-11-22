@@ -1,0 +1,4 @@
+node_modules/
+brain/data/
+brain/.mocap/
+.DS_Store
