@@ -74,20 +74,30 @@ export function search(query: string, category?: string, limit = 12): LibraryMov
 
 /// A handful of moves that fit her energy, a little different every time.
 export function suggest(energy: number, avoid: string, n = 8): LibraryMove[] {
-  const weights: Record<string, number> = energy > 0.72
-    ? { dance: 4, exercise: 4, play: 3, emotion: 1, gesture: 1, everyday: 1 }
-    : energy > 0.52
-      ? { play: 3, gesture: 3, everyday: 3, dance: 2, exercise: 2, emotion: 2, idle: 1 }
-      : energy > 0.32
-        ? { everyday: 4, gesture: 3, idle: 3, emotion: 2, sit: 2, exercise: 1 }
-        : { sit: 5, idle: 4, everyday: 2, emotion: 2 };
-  // Pantomimes (animals, monsters) stay searchable but aren't suggested unasked.
-  const pool = library().filter((m) => !avoid.includes(m.name.replace(/_/g, " ")) && !/human subject|ghost|zombie|monster|dinosaur/i.test(m.desc));
+  // Only what a person does at home, unprompted: small gestures, idling,
+  // stretching, sitting, a sway or a little dance when she's full of energy.
+  // Everything else (sport, acrobatics, ballet, work, miming objects she
+  // doesn't hold, two-person scenes) stays searchable with find_moves, for
+  // when the moment really calls for it, but is never suggested.
+  // Gestures meant for someone (wave, laugh, bow, point) are for talking
+  // with the user, not for doing alone: she finds those with find_moves.
+  const calm = /\b(wait(ing)?|look(ing)? around|stretch|yawn|think|scratch|hair|hands? on hips|arms? crossed|cross(ed)? arms|lean|relax|rest(ing)?|sigh|bored|sway|tap(ping)? (her |the )?foot|standing still|breath|shift(ing)? weight|idle)\b/i;
+  const sitting = /\b(sit(ting)?|sits) (down|on the floor|cross|and)|\bsitting\b|\bsit down\b/i;
+  const dancey = /^(dance|dancing)\b(?!.*(arabesque|pirouette|jete|attitude|plie|calibration|pose))/i;
+  const odd = /human subject|flashlight|strong man|bus|old man|macho|dinosaur|cat wait|cartwheel|spin|tiptoe|reach for|vignette|traffic|arrow|shoot|smash|angr|crying|drunk|zombie|monster|ghost|chicken|animal|calibration|sword|fight|punch|kick|saw|bolt|hammer|sweep|mop|clean|wash|toss|throw|catch|lift|carry|phone|mug|coffee|headphone|\bA\b|\bB\b|partner|part (?!1 of)\d+/i;
+  const fits = (m: LibraryMove) => {
+    const d = m.desc;
+    if (odd.test(d) || m.seconds > 12) return 0;
+    if (dancey.test(d)) return energy > 0.72 ? 2 : 0;
+    if (sitting.test(d)) return energy < 0.45 ? 4 : 1;
+    return calm.test(d) ? 3 : 0;
+  };
+  const pool = library().filter((m) => !avoid.includes(m.name.replace(/_/g, " ")) && fits(m) > 0);
   const pick: LibraryMove[] = [];
   const seen = new Set<string>();
   for (let tries = 0; pick.length < n && tries < 400 && pool.length; tries++) {
     const m = pool[Math.floor(Math.random() * pool.length)];
-    const w = Math.max(...m.tags.map((t) => weights[t] ?? 0.3));
+    const w = fits(m);
     const key = m.desc.toLowerCase();
     if (seen.has(key) || Math.random() * 5 > w) continue;
     seen.add(key);

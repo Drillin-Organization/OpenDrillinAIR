@@ -26,6 +26,12 @@ export class Ears {
   private talking = false;
   /// "hearing" held back while she talks, until it's clearly the user (not her echo).
   private heldHearing = false;
+  /// When she last stopped talking (her voice still rings in the mic a moment after).
+  private talkEndedAt = 0;
+  /// The phrase now being heard began while she talked: it's her own voice
+  /// coming back unless it clearly interrupted her (barge).
+  private overHer = false;
+  private barged = false;
   /// The user's usual voice (running averages), so "loud" means loud for them.
   private usual = { db: -30, hz: 0, spread: 2, n: 0 };
 
@@ -33,7 +39,7 @@ export class Ears {
     body.on("audio", (chunk: Buffer) => this.onAudio(chunk));
     body.on("talking", (active: boolean) => {
       this.talking = active;
-      if (!active) this.heldHearing = false;
+      if (!active) { this.heldHearing = false; this.talkEndedAt = Date.now(); }
       this.worker?.stdin?.write(JSON.stringify({ talking: active }) + "\n");
     });
   }
@@ -100,6 +106,10 @@ export class Ears {
     if (msg.ready) return this.tell("");
     if (msg.failed) return this.tell(`Speech model failed: ${msg.error}`);
     if (msg.speech) {
+      if (msg.speech === "start") {
+        this.overHer = this.talking || Date.now() - this.talkEndedAt < 1500;
+        this.barged = false;
+      }
       // While she talks, the mic hears her too: wait for proof it's the user.
       if (this.talking) {
         this.heldHearing = msg.speech === "start";
@@ -109,13 +119,16 @@ export class Ears {
       this.body.send({ type: "hearing", active: msg.speech === "start" });
       return;
     }
-    if (typeof msg.peek === "string") return this.onPeek(msg.peek);
+    if (typeof msg.peek === "string") return this.onPeek(msg.peek, Number(msg.n) || 1);
     if (msg.error) { this.log(`ears: ${msg.error}`); return; }
     if (typeof msg.text !== "string") return;
     const text = msg.text.replace(/\[[^\]]*\]|\([^)]*\)|\*[^*]*\*/g, "").trim();
     this.log(`ears: “${text}” (${Number(msg.seconds).toFixed(1)} s audio, ${msg.ms} ms)`);
     if (!text || HALLUCINATIONS.test(text)) { this.body.send({ type: "heard", text: "" }); return; }
-    if (this.isEcho(text)) { this.log(`ears: dropped her own voice: ${text}`); this.body.send({ type: "heard", text: "" }); return; }
+    // Began while she talked and didn't clearly cut in: her own voice through the speaker.
+    const overHer = this.overHer && !this.barged && !this.clearlyUser(text);
+    this.overHer = false;
+    if (overHer || this.isEcho(text)) { this.log(`ears: dropped her own voice${overHer ? " (said over her)" : ""}: ${text}`); this.body.send({ type: "heard", text: "" }); return; }
     this.body.send({ type: "heard", text });
     const tone = msg.tone ? this.describeTone(msg.tone, text, Number(msg.seconds)) : "";
     if (msg.tone) this.log(`ears: tone ${JSON.stringify(msg.tone)} → ${tone || "(usual)"}`);
@@ -124,15 +137,19 @@ export class Ears {
 
   /// The start of a phrase heard while she talks: if it isn't her own voice
   /// coming back, the user is talking over her, so she stops and listens.
-  private onPeek(text: string): void {
+  private onPeek(text: string, n: number): void {
     const clean = text.replace(/\[[^\]]*\]|\([^)]*\)|\*[^*]*\*/g, "").trim();
     if (!this.talking || !clean || HALLUCINATIONS.test(clean)) return;
-    const words = clean.toLowerCase().match(/[a-z']+/g) ?? [];
-    if (!words.length) return;
-    const now = Date.now();
-    const hers = new Set(this.said.filter((s) => s.until > now).flatMap((s) => s.text.toLowerCase().match(/[a-z']+/g) ?? []));
-    const own = words.filter((w) => hers.has(w)).length / words.length;
-    if (own >= 0.7) return; // her own words through the speaker
+    // Real talking over her: several words that aren't hers, even misheard
+    // (Whisper turns her "Ta-da, back view" into "Tada Backview"). A cough,
+    // a bump or one stray word must not cut her off.
+    const hers = this.herRecentSpeech();
+    const fresh = freshWords(clean, hers);
+    if (fresh < (n <= 1 ? 3 : 2) || overlap(clean, hers) >= 0.45) {
+      this.log(`ears: not talking over her (“${clean}”: ${fresh} new words, ${Math.round(overlap(clean, hers) * 100)}% hers)`);
+      return;
+    }
+    this.barged = true;
     this.log(`ears: the user talks over her (“${clean}”): she stops`);
     this.talking = false;
     this.voice.cancel();
@@ -167,16 +184,47 @@ export class Ears {
     return parts.join(", ");
   }
 
-  private isEcho(text: string): boolean {
-    const words = new Set(text.toLowerCase().match(/[a-z']+/g) ?? []);
-    if (words.size < 3) return false;
+  /// Everything she said lately, as one run of letters.
+  private herRecentSpeech(): string {
     const now = Date.now();
-    return this.said.some((s) => {
-      if (s.until < now) return false;
-      const hers = new Set(s.text.toLowerCase().match(/[a-z']+/g) ?? []);
-      let both = 0;
-      for (const w of words) if (hers.has(w)) both++;
-      return both / words.size >= 0.6;
-    });
+    return this.said.filter((s) => s.until > now).map((s) => letters(s.text)).join(" ");
   }
+
+  /// Her own voice coming back through the mic, even misheard (for phrases
+  /// that began after she stopped, so only when it's nearly all hers).
+  private isEcho(text: string): boolean {
+    if (letters(text).length < 4) return false;
+    return overlap(text, this.herRecentSpeech()) >= 0.75;
+  }
+
+  /// Said over her, but plainly not her lines: at least two words of its own.
+  private clearlyUser(text: string): boolean {
+    const hers = this.herRecentSpeech();
+    return freshWords(text, hers) >= 2 && overlap(text, hers) < 0.5;
+  }
+}
+
+/// Words in what was heard that she didn't say lately (spelling-tolerant).
+/// "Stop", "wait", "hey", "listen", "no" (not her own) count as two: the user
+/// cutting in, even in a single word.
+export function freshWords(heard: string, hers: string): number {
+  const words = (heard.toLowerCase().match(/[a-z']+/g) ?? []).map((w) => w.replace(/'/g, ""));
+  const stopper = words.some((w) => /^(stop|wait|hey|listen|no+|shh+|quiet|enough)$/.test(w) && !hers.split(" ").some((line) => line.includes(w)));
+  return words.filter((w) => w.length > 2 && !hers.includes(w)).length + (stopper ? 2 : 0);
+}
+
+/// Lowercase letters only ("Ta-da, back view!" → "tadabackview").
+function letters(text: string): string {
+  return text.toLowerCase().replace(/[^a-z]/g, "");
+}
+
+/// How much of what was heard sounds like her lines: the share of its letter
+/// triples found in what she said (robust to Whisper's spelling and splits).
+export function overlap(heard: string, hers: string): number {
+  const h = letters(heard);
+  const her = hers.replace(/ /g, "|");
+  if (h.length < 3 || !her) return 0;
+  let hit = 0, all = 0;
+  for (let i = 0; i + 3 <= h.length; i++) { all++; if (her.includes(h.slice(i, i + 3))) hit++; }
+  return all ? hit / all : 0;
 }

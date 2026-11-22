@@ -62,12 +62,12 @@ function transcribe(samples) {
 }
 
 /// A quick transcription of the start of a phrase (is the user talking over her?).
-function peek(samples) {
+function peek(samples, n) {
   queue = queue.then(async () => {
     try {
       const asr = await load(model);
       const r = await asr(samples, String(MODELS[model]).endsWith(".en") ? {} : { language: "en", task: "transcribe" });
-      out({ peek: String(r.text ?? "").trim() });
+      out({ peek: String(r.text ?? "").trim(), n });
     } catch {}
   });
 }
@@ -163,7 +163,7 @@ async function onChunk(chunk) {
     peeked++;
     const all = new Float32Array(phrase.length * CHUNK);
     phrase.forEach((c, i) => all.set(c, i * CHUNK));
-    peek(all);
+    peek(all, peeked);
   }
   if (below >= END_CHUNKS || phrase.length >= MAX_CHUNKS) {
     speaking = false; above = 0;

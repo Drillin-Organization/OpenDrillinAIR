@@ -27,6 +27,26 @@ export type Step =
 
 type Plan = { id: string; steps: Step[]; note: string; i: number; cancelled: boolean; done: string[] };
 
+/// Where a walk or face goes: a marked thing or named place (by name, in
+/// this room), the user or a character, or x/z. Walking to a thing stops
+/// about 0.6 m short of it, so she ends up beside it, not inside it.
+export function namedTarget(body: Body, id: string | null, s: { x?: number; z?: number; to?: string; place?: string; thing?: string }, walking: boolean): Record<string, unknown> | null {
+  const mapId = body.scene?.mapId as string | null;
+  let at: { x: number; z: number } | undefined;
+  if (s.thing) at = world.readThings(mapId)[s.thing];
+  else if (s.place) at = store.readPlaces(mapId)[s.place];
+  else if (s.to) return { to: s.to };
+  else if (typeof s.x === "number" && typeof s.z === "number") return { x: s.x, z: s.z };
+  if (!at) return null;
+  const c = id ? body.scene?.characters.find((x) => x.id === id) : undefined;
+  if (walking && s.thing && c) {
+    const dx = at.x - c.x, dz = at.z - c.z, d = Math.hypot(dx, dz), keep = 0.6;
+    if (d <= keep) return { x: c.x, z: c.z };
+    return { x: at.x - (dx / d) * keep, z: at.z - (dz / d) * keep };
+  }
+  return { x: at.x, z: at.z };
+}
+
 export class Life {
   private plans = new Map<string, Plan>();
   private recent = new Map<string, Array<{ t: number; what: string }>>();
@@ -67,6 +87,13 @@ export class Life {
     this.recent.set(id, list);
   }
 
+  /// Another character now has this id: her recent life and rhythm start fresh.
+  forget(id: string): void {
+    this.cancel(id, "another character has this id");
+    this.recent.delete(id);
+    this.phase.delete(id);
+  }
+
   /// "4 min ago: sat on the sofa; 1 min ago: stretched" (newest last).
   history(id: string): string {
     const now = Date.now();
@@ -78,7 +105,9 @@ export class Life {
     }).join("; ");
   }
 
-  /// Energy rises and falls over a few minutes, a little different per character.
+  /// Energy drifts slowly (over half an hour or so), a little different per
+  /// character, on top of the day's rhythm: no swings from lively to
+  /// exhausted within a minute.
   energy(id: string): { level: number; label: string } {
     if (!this.phase.has(id)) this.phase.set(id, Math.random() * Math.PI * 2);
     const t = Date.now() / 1000;
@@ -86,11 +115,11 @@ export class Life {
     // The day's rhythm underneath: liveliest mid-afternoon, lowest in the small hours.
     const d = new Date(), hour = d.getHours() + d.getMinutes() / 60;
     const day = 0.14 * Math.cos(((hour - 15) / 24) * 2 * Math.PI);
-    const level = Math.max(0, Math.min(1, 0.48 + day + 0.25 * Math.sin((2 * Math.PI * t) / 420 + p) + 0.12 * Math.sin((2 * Math.PI * t) / 97 + 2 * p)));
-    const label = level > 0.72 ? "restless: wants to move, explore, do something physical"
+    const level = Math.max(0, Math.min(1, 0.5 + day + 0.14 * Math.sin((2 * Math.PI * t) / 2400 + p) + 0.04 * Math.sin((2 * Math.PI * t) / 420 + 2 * p)));
+    const label = level > 0.72 ? "restless: wants to move about, explore, maybe put on some music"
       : level > 0.52 ? "lively: curious, up for wandering and trying things"
       : level > 0.32 ? "mellow: unhurried, likes looking around, small things, sitting a while"
-      : "low: wants to rest, sit or lie down, daydream";
+      : "low: quiet, wants to sit somewhere comfortable for a while";
     return { level: Math.round(level * 100) / 100, label };
   }
 
@@ -139,7 +168,7 @@ export class Life {
   private async step(id: string, s: Step, plan: Plan): Promise<string | null> {
     switch (s.do) {
       case "walk": case "face": {
-        const args = this.target(s);
+        const args = namedTarget(this.body, id, s, s.do === "walk");
         if (!args) return null;
         const r = await this.body.command("run", { character: id, behavior: s.do, args: { ...args, quiet: true } });
         if (!r.ok) { this.note(id, `couldn't ${s.do} to ${this.describe(s)} (${r.error})`); return null; }
@@ -231,17 +260,7 @@ export class Life {
   }
 
   private target(s: { x?: number; z?: number; to?: string; place?: string; thing?: string }): Record<string, unknown> | null {
-    if (s.thing) {
-      const t = world.readThings(this.body.scene?.mapId as string | null)[s.thing];
-      return t ? { x: t.x, z: t.z } : null;
-    }
-    if (s.place) {
-      const p = store.readPlaces(this.body.scene?.mapId as string | null)[s.place];
-      return p ? { x: p.x, z: p.z } : null;
-    }
-    if (s.to) return { to: s.to };
-    if (typeof s.x === "number" && typeof s.z === "number") return { x: s.x, z: s.z };
-    return null;
+    return namedTarget(this.body, null, s, false);
   }
 
   private describe(s: { x?: number; z?: number; to?: string; place?: string; thing?: string }): string {

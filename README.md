@@ -46,6 +46,7 @@ The mind’s galaxy (pictured above) is at **http://localhost:8788** on the comp
 
 - **Direct her** by typing in the chat: "make her shyer", "teach her to moonwalk", "rewrite her walk".
 - **She keeps going without the phone.** When the phone is away she daydreams about the world she has seen, then picks up again when it reconnects.
+- **Camera memory.** The phone sends a plain camera picture every second (Settings › Camera memory; Off, 0.5–10 s) with its position and a little LiDAR depth. The brain keeps the last 30 minutes in full and only key frames after that, up to 2 GB (`BRAIN_FRAMES_FULL_MIN`, `BRAIN_FRAMES_GB`). The mind looks back with `recall_frames` when it wonders what happened; the depth fills in a lasting map of each room; and while dreaming she studies a few pictures to learn the place. Pictures never leave your computer.
 - **Stopping:** she stops only when you stop Claude in that chat (Esc, or close the chat).
 - **Start a fresh chat with `/soul` each session.** Her memories, personality, relationship and moves are stored in the brain, so nothing is lost, and a short chat answers faster.
 - **After updating** (`git pull`, then `./setup.sh`), reconnect the server with `/mcp` → drillin-body → Reconnect, then `/soul`.
@@ -62,7 +63,7 @@ brain/ui/galaxy.html         the live galaxy at localhost:8788
 brain/assets/Moves/          ~2,500 motion-capture moves on the characters' skeleton
 brain/assets/Behaviors/      the behaviour scripts the characters start with
 brain/models/                Silero voice-activity model
-brain/data/                  created on first run: characters, memories, dreams, moves (not in git)
+brain/data/                  created on first run: characters, memories, dreams, moves, camera memory (not in git)
 ```
 
 `.claude/settings.json` pre-approves only this project's own `drillin-body` tools, so the loop never stops to wait on a prompt. Read it before you trust it.

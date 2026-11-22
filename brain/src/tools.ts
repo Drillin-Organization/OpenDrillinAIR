@@ -13,11 +13,13 @@ import * as store from "./store.js";
 import { characterNode, emitActivity, toolArea, toolNames, wiring } from "./ui.js";
 import { Voice } from "./voice.js";
 import type { Ears } from "./ears.js";
-import { Life, type Step } from "./life.js";
+import { Life, namedTarget, type Step } from "./life.js";
 import { inLibrary, library, search as searchMoves } from "./moves.js";
 import * as soul from "./soul.js";
 import * as compose from "./compose.js";
 import * as world from "./world.js";
+import * as frames from "./frames.js";
+import * as roommap from "./roommap.js";
 
 /// Tools whose success changes what the mind knows (the galaxy grows).
 const GROWS = new Set(["write_animation", "write_behavior", "revert_behavior", "remember", "update_persona", "update_life", "name_place", "forget_place"]);
@@ -45,6 +47,8 @@ function summary(name: string, input: Record<string, any>): string {
     case "create_soul": return `${input.character}: ${input.name ?? ""}, ${input.age ?? ""}`;
     case "find_moves": return `“${input.query ?? input.category ?? ""}”`;
     case "name_room": return `“${input.name}”`;
+    case "recall_frames": return [input.seconds_ago !== undefined && `${input.seconds_ago} s ago`, input.at, input.near].filter(Boolean).join(", ") || "lately";
+    case "note_from_frame": return (input.things ?? []).map((t: any) => t.name).join(", ");
     case "mark_thing": return (input.things ?? []).map((t: any) => t.name).join(", ") || String(input.name ?? "");
     default: {
       const s = JSON.stringify(input);
@@ -58,7 +62,7 @@ const MIN_VERSIONS = 3;
 
 /// Bumped when tools or instructions change; /soul checks it so a chat never
 /// runs on a stale brain process.
-export const BRAIN_VERSION = 26;
+export const BRAIN_VERSION = 29;
 
 const text = (t: unknown): CallToolResult => ({
   content: [{ type: "text", text: typeof t === "string" ? t : JSON.stringify(t) }],
@@ -70,7 +74,9 @@ const character = z.string().describe("Character id from the scene, e.g. c1");
 export function registerTools(server: McpServer, body: Body, hub: EventHub, voice: Voice, ears: Ears): void {
   function nameOf(id: string): string {
     // In the scene, or (while the phone is away) the last ones it showed.
-    const name = body.characterName(id) ?? hub.knownCharacters().find((c) => c.id === id || c.name.toLowerCase() === id.toLowerCase())?.name;
+    // A stored character's exact name works too (helpers use names: ids get reused).
+    const name = body.characterName(id) ?? hub.knownCharacters().find((c) => c.id === id || c.name.toLowerCase() === id.toLowerCase())?.name
+      ?? store.characterNames().find((n) => n.toLowerCase() === id.toLowerCase());
     if (!name) throw new Error(`no character "${id}" in the scene`);
     return name;
   }
@@ -146,7 +152,7 @@ export function registerTools(server: McpServer, body: Body, hub: EventHub, voic
 
   tool(
     "run_behavior",
-    "Start a behaviour script on a character (replaces her current one). Built in: walk {x,z} | {to:'user'} | {to:'<id>'} (plans a route around walls and furniture on the LiDAR room map; fails if there is no route); face (same targets); idle (resting; {look: degrees} to look somewhere, + = her left); dance (her own dance until replaced); play {name} (an animation; prefer play_animation). Set notify to be woken when it finishes.",
+    "Start a behaviour script on a character (replaces her current one). Built in: walk {thing:'<marked thing>'} | {place:'<named place>'} | {to:'user'} | {to:'<id>'} | {x,z} (by name is best: she stops beside a thing, no coordinates to guess; plans a route around walls and furniture on the LiDAR room map; fails if there is no route); face (same targets); idle (resting; {look: degrees} to look somewhere, + = her left); dance (her own dance until replaced); play {name} (an animation; prefer play_animation). Set notify to be woken when it finishes.",
     {
       character,
       behavior: z.string(),
@@ -155,6 +161,16 @@ export function registerTools(server: McpServer, body: Body, hub: EventHub, voic
       say: z.string().optional().describe("A short line she says as she starts (same as calling say; saves a step)"),
     },
     async ({ character: id, behavior, args, notify, say: line }) => {
+      if ((behavior === "walk" || behavior === "face") && args && (args.thing || args.place)) {
+        const { thing, place, ...rest } = args;
+        const at = namedTarget(body, id, { thing, place }, behavior === "walk");
+        if (!at) {
+          const mapId = body.scene?.mapId as string | null;
+          const known = thing ? Object.keys(world.readThings(mapId)) : Object.keys(store.readPlaces(mapId));
+          return fail(`No ${thing ? "thing" : "place"} "${thing ?? place}" in this room. Known: ${known.join(", ") || "none yet"}.`);
+        }
+        args = { ...rest, ...at };
+      }
       life.cancel(id, "the mind took over");
       life.note(id, `${behavior}${args && Object.keys(args).length ? " " + JSON.stringify(args) : ""}`);
       const [r] = await Promise.all([
@@ -188,7 +204,7 @@ export function registerTools(server: McpServer, body: Body, hub: EventHub, voic
 
   tool(
     "create_soul",
-    "Give a character her full soul: who she is, in depth (asked for when you meet someone without one). Make her specific and surprising, true to her seed and to anything you already know of her. bodyLanguage maps moods to how she shows them (moves from find_moves or your own words); routines say what she likes doing at each energy level. Saved for good and shown each session.",
+    "Give a character her full soul: who she is, in depth (asked for when you meet someone without one). Make her a believable, grounded person, true to her seed and to anything you already know of her: specific, warm, with an inner life, not a bundle of quirks (quirks are small and show rarely; catchphrases are things she might say once a day, not every line). bodyLanguage maps moods to how she shows them (moves from find_moves or your own words); routines say what she likes doing at each energy level. Saved for good and shown each session.",
     {
       character,
       name: z.string().describe("What she calls herself (may differ from the app's label)"),
@@ -229,7 +245,7 @@ export function registerTools(server: McpServer, body: Body, hub: EventHub, voic
 
   tool(
     "dream",
-    "While the phone is away (a Dreaming wake), write what a character daydreams: 1–3 vivid first-person sentences continuing the thread of her last dream, drawn from the world she has seen. It goes into her dream journal; later dreams and her return to the phone carry on from it. Optionally a feeling the dream leaves her with.",
+    "While the phone is away (a Dreaming wake), write what a character daydreams: one or two plain first-person sentences, the way a real person's mind idles, grounded in what really happened and what she has seen. It goes into her dream journal; later dreams and her return to the phone carry on from it. Optionally a feeling the dream leaves her with.",
     {
       character,
       thought: z.string().min(3).describe("Her daydream, first person, 1–3 sentences"),
@@ -328,7 +344,7 @@ export function registerTools(server: McpServer, body: Body, hub: EventHub, voic
 
   tool(
     "mark_thing",
-    "Remember something she noticed in the last camera picture (a snapshot or an attached picture): give where it is in the picture (u from the left, v from the top, 0–1) and the phone finds it in the room. It becomes part of her world: listed in every free time, and she can walk to it (live: {do:'walk', thing:'guitar'}). Mark interesting, specific things (a guitar, the big plant, a painting, the fruit bowl), not walls.",
+    "Remember something she noticed in the last camera picture (a snapshot or an attached picture): give where it is in the picture (u from the left, v from the top, 0–1) and the phone finds it in the room. It becomes part of her world: listed in every free time, and she can walk to it (run_behavior walk {thing:'guitar'}, or live: {do:'walk', thing:'guitar'}). Mark interesting, specific things (a guitar, the big plant, a painting, the fruit bowl), not walls.",
     {
       things: z.array(z.object({
         name: z.string().describe("short and specific, e.g. 'green armchair'"),
@@ -356,14 +372,106 @@ export function registerTools(server: McpServer, body: Body, hub: EventHub, voic
   );
 
   tool(
+    "recall_frames",
+    "Look back through camera memory: plain camera pictures the phone keeps sending (no characters drawn in), stored on this computer. Use it whenever you wonder what happened or what is around: what the user showed a moment ago, what was in view when they said something, what a spot looked like earlier. By time (seconds_ago, or at a clock time today like '14:13'), or near a marked thing or named place (pictures that looked at it). Returns up to 8 pictures with their frame ids, oldest first; give a frame id to note_from_frame to mark something in it.",
+    {
+      seconds_ago: z.number().min(0).optional().describe("Centre of the moment to look at, in seconds before now"),
+      at: z.string().optional().describe("A clock time today, 'HH:MM' or 'HH:MM:SS'"),
+      span_s: z.number().min(1).max(3600).optional().describe("How long a stretch around that moment (default 10 s; 60 s without a time)"),
+      near: z.string().optional().describe("A marked thing or named place: pictures that looked at it"),
+      count: z.number().int().min(1).max(8).optional().describe("How many pictures (default 4)"),
+    },
+    async ({ seconds_ago, at, span_s, near, count }) => {
+      const n = count ?? 4;
+      let list = frames.all();
+      if (!list.length) return fail("Camera memory is empty (Settings › Camera memory on the phone; frames arrive while the mind is connected).");
+      let centre: number | null = null;
+      if (seconds_ago !== undefined) centre = Date.now() - seconds_ago * 1000;
+      else if (at) {
+        const m = at.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+        if (!m) return fail("at must look like 14:13 or 14:13:20");
+        const d = new Date(); d.setHours(Number(m[1]), Number(m[2]), Number(m[3] ?? 0), 0);
+        centre = d.getTime();
+      }
+      if (near) {
+        const mapId = (body.scene?.mapId as string | null) ?? hub.knownMap();
+        const spot = world.readThings(mapId)[near] ?? store.readPlaces(mapId)[near];
+        if (!spot) return fail(`No thing or place "${near}" in this room. Known: ${[...Object.keys(world.readThings(mapId)), ...Object.keys(store.readPlaces(mapId))].join(", ") || "none yet"}.`);
+        list = list.filter((m) => {
+          if (m.mapId !== mapId) return false;
+          const c = frames.camera(m);
+          const dx = spot.x - c.x, dz = spot.z - c.z, d = Math.hypot(dx, dz);
+          if (d > 5) return false;
+          let a = Math.abs(Math.atan2(dx, dz) - c.yaw); if (a > Math.PI) a = 2 * Math.PI - a;
+          return d < 0.8 || a < 0.5;
+        });
+      }
+      const span = (span_s ?? (centre !== null ? 10 : 60)) * 1000;
+      const mid = centre ?? (list.length ? list[list.length - 1].t - span / 2 : Date.now());
+      let window = centre !== null || !near ? list.filter((m) => Math.abs(m.t - mid) <= span / 2) : list;
+      if (!window.length && centre !== null) {
+        // Nothing then (thinned or not running): the nearest frames to that moment.
+        window = [...list].sort((a, b) => Math.abs(a.t - mid) - Math.abs(b.t - mid)).slice(0, n).sort((a, b) => a.t - b.t);
+      }
+      if (!window.length) return fail(near ? `No pictures that looked at ${near} yet.` : "No pictures from then.");
+      const picks = frames.spread(window, n);
+      const content: CallToolResult["content"] = [];
+      const rooms = world.readRooms();
+      const lines = picks.map((m) => {
+        const c = frames.camera(m);
+        const ago = Math.round((Date.now() - m.t) / 1000);
+        const when = new Date(m.t).toLocaleTimeString("en-GB");
+        const agoText = ago < 120 ? `${ago} s ago` : ago < 7200 ? `${Math.round(ago / 60)} min ago` : `${(ago / 3600).toFixed(1)} h ago`;
+        const who = m.characters?.length ? `; ${m.characters.map((x) => x.name).join(", ")} in view` : "";
+        return `frame ${m.t}: ${when} (${agoText}), ${m.mapId ? `in ${rooms[m.mapId]?.name ? `"${rooms[m.mapId].name}"` : "a saved room"}` : "in an unsaved room"}, camera at x ${c.x.toFixed(1)}, z ${c.z.toFixed(1)}${who}`;
+      });
+      content.push({ type: "text", text: `${picks.length} of ${window.length} pictures from then, oldest first (characters are not drawn in camera memory):\n${lines.join("\n")}` });
+      for (const m of picks) {
+        const data = frames.jpeg(m);
+        if (data) content.push({ type: "image", data, mimeType: "image/jpeg" });
+      }
+      return { content };
+    },
+  );
+
+  tool(
+    "note_from_frame",
+    "Mark things she sees in a camera-memory picture (from recall_frames or a study wake), like mark_thing but for an older picture: give the frame id and where the thing is in that picture (u from the left, v from the top, 0–1). It's found in the room from that picture's own depth, so it works while the phone is away. Use kind 'door' or 'window' for those, so they show on her map.",
+    {
+      frame: z.union([z.string(), z.number()]).describe("Frame id (the number after 'frame')"),
+      things: z.array(z.object({
+        name: z.string().describe("short and specific, e.g. 'green armchair'"),
+        u: z.number().min(0).max(1), v: z.number().min(0).max(1),
+        kind: z.string().optional().describe("e.g. furniture, plant, art, door, window, light"),
+        note: z.string().optional().describe("what she thinks of it"),
+      })).min(1).max(10),
+    },
+    async ({ frame, things }) => {
+      const m = frames.get(frame);
+      if (!m) return fail(`No frame ${frame} in camera memory (it may have been thinned out).`);
+      const known = world.readThings(m.mapId);
+      const out: string[] = [];
+      for (const t of things) {
+        const p = frames.locate(m, t.u, t.v);
+        if (!p) { out.push(`${t.name}: no depth there in that picture (try a point on it nearer the middle, or another frame)`); continue; }
+        known[t.name] = { x: p.x, y: p.y, z: p.z, kind: t.kind ?? "thing", note: t.note ?? "", at: Date.now(), visits: known[t.name]?.visits ?? 0 };
+        out.push(`${t.name}: at x ${p.x.toFixed(2)}, z ${p.z.toFixed(2)}`);
+      }
+      world.writeThings(m.mapId, known);
+      emitActivity({ kind: "result", area: "space", node: "space:map", label: `noticed ${things.map((t) => t.name).join(", ")} in camera memory`, grew: true });
+      return text(out.join("\n") + (m.mapId ? "" : "\n(That picture is from a room that wasn't saved yet; these stay with the unsaved room until it is.)"));
+    },
+  );
+
+  tool(
     "name_room",
     "Name the room the phone is in (saved room maps are recognised when the user comes back): 'living room', 'Sam's bedroom', 'kitchen', … Everything she learns here stays with this room.",
-    { name: z.string().min(1) },
-    async ({ name }) => {
-      const mapId = body.scene?.mapId as string | null;
+    { name: z.string().min(1), description: z.string().optional().describe("A sentence or two on what the room is like (from what she has seen), kept with it") },
+    async ({ name, description }) => {
+      const mapId = (body.scene?.mapId as string | null) ?? hub.knownMap();
       if (!mapId) return fail("This room isn't saved yet (it saves automatically within half a minute of scanning); try again shortly.");
       const rooms = world.readRooms();
-      rooms[mapId] = { ...(rooms[mapId] ?? { firstSeen: Date.now(), lastSeen: Date.now(), visits: 1 }), name };
+      rooms[mapId] = { ...(rooms[mapId] ?? { firstSeen: Date.now(), lastSeen: Date.now(), visits: 1 }), name, ...(description ? { description } : {}) };
       world.writeRooms(rooms);
       emitActivity({ kind: "result", area: "space", node: "space:map", label: `room named ${name}`, grew: true });
       return text(`This room is "${name}".`);
@@ -476,26 +584,37 @@ export function registerTools(server: McpServer, body: Body, hub: EventHub, voic
     "A top-down map of the room from the phone's LiDAR scan, turned so the way the user faces is up: walls and furniture, scanned floor, unscanned areas, the user, the characters (and where they face), doors, windows and named places, with a legend of directions from the user. Use it before walking somewhere you can't see, and whenever left/right/behind is unclear.",
     { radius_m: z.number().min(2).max(15).optional().describe("How far around the user to show (default 6)") },
     async ({ radius_m }) => {
-      const r = await body.command("map", {}, 15000);
-      if (!r.ok || !r.data?.rows) return fail(r.error ?? r.data?.error ?? "no map yet");
       const scene = body.scene;
+      const mapId = (scene?.mapId as string | null) ?? hub.knownMap();
+      const r = body.connected ? await body.command("map", {}, 15000) : { ok: false, error: "the phone is away" } as { ok: boolean; data?: any; error?: string };
+      let grid: Grid | null = r.ok && r.data?.rows ? (r.data as Grid) : null;
+      let memoryNote = "";
+      if (grid) {
+        const f = roommap.fill(grid, mapId);
+        grid = f.grid;
+        if (f.filled) memoryNote = `\n(${f.filled} cells the phone hasn't scanned this time are filled in from camera memory.)`;
+      } else if (mapId && (grid = roommap.grid(mapId))) {
+        memoryNote = `\n(The phone's scan isn't available (${r.error ?? r.data?.error ?? "no map"}): this is the room as camera memory knows it; the user and characters are where they were last seen.)`;
+      }
+      if (!grid) return fail(r.error ?? r.data?.error ?? "no map yet");
       const u = (scene?.user ?? {}) as Record<string, number>;
       const user = { x: u.x ?? 0, z: u.z ?? 0, yaw: u.yaw ?? 0 };
       const marks: Parameters<typeof renderMap>[2] = [];
       for (const c of scene?.characters ?? []) marks.push({ label: `${c.id} ${c.name}`, x: c.x, z: c.z, yaw: c.yaw, kind: "character" });
-      for (const [name, p] of Object.entries(store.readPlaces(scene?.mapId as string | null))) marks.push({ label: name, x: p.x, z: p.z, kind: "place" });
+      for (const [name, p] of Object.entries(store.readPlaces(mapId))) marks.push({ label: name, x: p.x, z: p.z, kind: "place" });
+      for (const [name, t] of Object.entries(world.readThings(mapId))) marks.push({ label: name, x: t.x, z: t.z, kind: t.kind === "door" || t.kind === "window" ? t.kind : "place" });
       for (const p of (scene?.planes ?? []) as Array<Record<string, any>>) {
         if (p.kind === "door" || p.kind === "window") marks.push({ label: `${p.kind} ${p.id}`, x: p.x, z: p.z, kind: p.kind });
       }
-      const map = renderMap(r.data as Grid, user, marks, radius_m ?? 6);
-      const note = r.data.lidar ? "" : "\n(No LiDAR on this phone: only walls detected as planes are shown.)";
+      const map = renderMap(grid, user, marks, radius_m ?? 6);
+      const note = (r.ok && r.data && !r.data.lidar ? "\n(No LiDAR on this phone: only walls detected as planes are shown.)" : "") + memoryNote;
       return { content: [{ type: "text", text: map.legend + note }, { type: "image", data: map.png.toString("base64"), mimeType: "image/png" }] };
     },
   );
 
   tool(
     "name_place",
-    "Remember a named spot in this room map ('kitchen', 'sofa', 'Sam's desk'): at the user's position (default), at a character, or at x/z. Places are listed in every scene with directions from the user, and walking there is run_behavior walk {x, z}.",
+    "Remember a named spot in this room map ('kitchen', 'sofa', 'Sam's desk'): at the user's position (default), at a character, or at x/z. Places are listed in every scene with directions from the user, and walking there is run_behavior walk {place: name}.",
     {
       name: z.string().min(1),
       at: z.string().optional().describe("'user' (default) or a character id"),

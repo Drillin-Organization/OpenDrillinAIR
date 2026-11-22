@@ -71,6 +71,9 @@ export class Body extends EventEmitter {
         case "voice_preview":
           this.emit("voice_preview", String(msg.voice ?? ""));
           break;
+        case "frame":
+          this.emit("frame", (msg.data ?? {}) as Record<string, unknown>);
+          break;
         case "scene":
           this.scene = msg.data as Scene;
           this.sceneAt = Date.now();

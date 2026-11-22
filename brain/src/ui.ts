@@ -82,7 +82,8 @@ export function toolArea(name: string, input: Record<string, any>): { area: Area
     case "soul_review": return { area: "soul", node: input.character ? `inner:${input.character}` : undefined };
     case "dream": return { area: "soul", node: input.character ? `dreams:${input.character}` : undefined };
     case "create_soul": case "feel": return { area: "soul", node: input.character ? `inner:${input.character}` : undefined };
-    case "mark_thing": return { area: "space", node: "space:things" };
+    case "mark_thing": case "note_from_frame": return { area: "space", node: "space:things" };
+    case "recall_frames": return { area: "senses", node: "sense:camera" };
     case "get_scene": return { area: "senses", node: "sense:scene" };
     case "name_room": return { area: "space", node: "space:rooms" };
     case "find_moves": return { area: "skills", node: "tool:find_moves" };

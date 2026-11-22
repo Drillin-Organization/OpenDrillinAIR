@@ -96,7 +96,7 @@ export function towards(from: { x: number; z: number; yaw: number }, p: { x: num
 
 // MARK: Rooms
 
-export type Room = { name: string; firstSeen: number; lastSeen: number; visits: number };
+export type Room = { name: string; firstSeen: number; lastSeen: number; visits: number; description?: string };
 const ROOMS = path.join(DATA, "rooms.json");
 
 export function readRooms(): Record<string, Room> {
@@ -146,7 +146,7 @@ export function roomEvent(info: { mapId?: string; status: string }, places: Reco
   writeRooms(rooms);
   const things = Object.keys(readThings(id));
   return [
-    `The phone recognised the room: she's back in ${room.name ? `the ${room.name}` : `a room she's been in before (unnamed; name it with name_room)`}${known ? `, visit ${room.visits}, last here ${ago(since)} ago` : ""}.`,
+    `The phone recognised the room: she's back in ${room.name ? `the ${room.name}` : `a room she's been in before (unnamed; name it with name_room)`}${known ? `, visit ${room.visits}, last here ${ago(since)} ago` : ""}.${room.description ? ` ${room.description}` : ""}`,
     Object.keys(places).length ? `Places she knows here: ${Object.keys(places).join(", ")}.` : "",
     things.length ? `Things she remembers here: ${things.join(", ")}.` : "",
     "Let her recognise it like a person would (it's familiar, she knows where things are).",
