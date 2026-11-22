@@ -71,7 +71,7 @@ const MIN_VERSIONS = 3;
 
 /// Bumped when tools or instructions change; /soul checks it so a chat never
 /// runs on a stale brain process.
-export const BRAIN_VERSION = 33;
+export const BRAIN_VERSION = 34;
 
 const text = (t: unknown): CallToolResult => ({
   content: [{ type: "text", text: typeof t === "string" ? t : JSON.stringify(t) }],

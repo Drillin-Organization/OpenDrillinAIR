@@ -46,7 +46,7 @@ The mind’s galaxy (pictured above) is at **http://localhost:8788** on the comp
 
 - **Direct her** by typing in the chat: "make her shyer", "teach her to moonwalk", "rewrite her walk".
 - **She keeps going without the phone.** When the phone is away she daydreams about the world she has seen, then picks up again when it reconnects.
-- **Background helpers.** Up to 10 Claude helpers (5 by default; phone Settings › Background helpers) work in parallel in the same Claude Code chat: working out which room she's in and where (shown live in the galaxy's Rooms view), studying rooms from camera memory, joining rooms the phone saved twice (their maps are lined up automatically and a helper confirms from the pictures), reflection, and slow jobs like learning a move. More helpers use more of your Claude plan.
+- **Background helpers.** Up to 10 Claude helpers (2 by default; phone Settings › Background helpers) work in parallel in the same Claude Code chat: working out which room she's in and where (shown live in the galaxy's Rooms view), studying rooms from camera memory, joining rooms the phone saved twice (their maps are lined up automatically and a helper confirms from the pictures), reflection, and slow jobs like learning a move. More helpers use more of your Claude plan.
 - **Camera memory.** The phone sends a plain camera picture every second (Settings › Camera memory; Off, 0.5–10 s) with its position and a little LiDAR depth. The brain keeps the last 30 minutes in full and only key frames after that, up to 2 GB (`BRAIN_FRAMES_FULL_MIN`, `BRAIN_FRAMES_GB`). The mind looks back with `recall_frames` when it wonders what happened; the depth fills in a lasting map of each room; and while dreaming she studies a few pictures to learn the place. Pictures never leave your computer.
 - **Stopping:** she stops only when you stop Claude in that chat (Esc, or close the chat).
 - **Start a fresh chat with `/soul` each session.** Her memories, personality, relationship and moves are stored in the brain, so nothing is lost, and a short chat answers faster.
@@ -99,3 +99,11 @@ Everything the brain stores stays on your computer in `brain/data/`. What she se
 Motion data from the CMU Graphics Lab Motion Capture Database ([mocap.cs.cmu.edu](http://mocap.cs.cmu.edu)). Voice by [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M). Speech recognition by Whisper through [transformers.js](https://github.com/huggingface/transformers.js). Voice activity by [Silero VAD](https://github.com/snakers4/silero-vad).
 
 Claude and Claude Code are made by Anthropic. You need your own Claude account to use them. OpenDrillinAIR is made by Drillin OÜ and is not affiliated with Anthropic.
+
+## Pairing and privacy
+
+The first time your phone connects, Claude shows a 6-digit pairing code in the chat (and on the galaxy page). Enter it on the phone. From then on the phone and the brain prove to each other that they're paired on every connection, so no other device on the network can receive the camera or microphone or drive the characters. Camera pictures, audio, memories and maps stay on your computer, in `brain/data/`. Settings › Unpair this phone forgets the pairing; deleting `brain/data/pairing.json` makes every phone pair again.
+
+## License
+
+MIT, see [LICENSE](LICENSE). Motion data from the CMU Graphics Lab Motion Capture Database (mocap.cs.cmu.edu).

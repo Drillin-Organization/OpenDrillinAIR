@@ -4,7 +4,7 @@
 // slow work the main loop hands over (learning a move, thinking something
 // through). Each worker loops: next_job → do it → job_done → next_job. The
 // brain keeps the queue and asks the main loop to start more workers when
-// fewer than the configured number (phone Settings, default 5) are alive.
+// fewer than the configured number (phone Settings, default 2) are alive.
 import { emitActivity } from "./ui.js";
 
 export type Job = {
@@ -33,7 +33,7 @@ const running = new Map<string, Job>();
 const workers = new Map<string, Worker>();
 const done: Array<{ id: string; title: string; by: string; result: string; at: number; kind: string }> = [];
 let requested: Array<{ at: number; n: number }> = [];
-let target = Number(process.env.BRAIN_HELPERS ?? 5);
+let target = Number(process.env.BRAIN_HELPERS ?? 2);
 let nextId = 1;
 const waiters: Array<() => void> = [];
 

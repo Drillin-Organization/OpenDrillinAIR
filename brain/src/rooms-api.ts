@@ -5,6 +5,7 @@
 import type http from "node:http";
 import * as frames from "./frames.js";
 import * as groups from "./groups.js";
+import * as pairing from "./pairing.js";
 import { png } from "./preview.js";
 import * as roommap from "./roommap.js";
 import * as store from "./store.js";
@@ -135,6 +136,7 @@ function depthPng(m: frames.FrameMeta): Buffer | null {
 export function roomsRoute(url: URL, res: http.ServerResponse): boolean {
   const p = url.pathname;
   if (p === "/rooms") { json(res, rooms()); return true; }
+  if (p === "/pairing") { json(res, { code: pairing.activeCode(), phones: pairing.phones() }); return true; }
   if (p === "/rooms/live") { json(res, liveSource?.() ?? null); return true; }
   let m = /^\/rooms\/([A-Za-z0-9_-]+)\/map$/.exec(p);
   if (m) { json(res, roomMap(m[1])); return true; }

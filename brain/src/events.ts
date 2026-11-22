@@ -278,6 +278,16 @@ export class EventHub {
   constructor(private body: Body) {
     body.on("hello", () => this.onHello());
     body.on("frame", (data: Record<string, unknown>) => this.onFrame(data));
+    body.on("pair_request", (r: { device: string; code: string; until: number }) => {
+      const code = `${r.code.slice(0, 3)} ${r.code.slice(3)}`;
+      log(`pairing code for ${r.device}: ${code}`);
+      emitActivity({ kind: "event", area: "senses", node: "sense:scene", label: `${r.device} wants to pair: code ${code}` });
+      this.push(true, `Pairing: the phone "${r.device}" wants to connect to this brain for the first time. Tell the user in the chat, as plain text in one short line (not with say): "Pairing code: ${code}: enter it on your phone (valid 10 minutes)." Then wait for events as usual.`);
+    });
+    body.on("paired", (device: string) => {
+      log(`paired with ${device}`);
+      emitActivity({ kind: "event", area: "senses", node: "sense:scene", label: `paired with ${device}`, grew: true });
+    });
     setInterval(() => this.tidyFrames(), 5 * 60_000).unref();
     // Keep the phone's LiDAR scan of each room (for browsing rooms in the galaxy).
     setInterval(() => void this.keepScan(), 60_000).unref();

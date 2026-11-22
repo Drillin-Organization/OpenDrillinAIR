@@ -2,6 +2,7 @@
 // Commands go down and resolve when the phone replies; events and scene
 // updates come up.
 import * as jobs from "./jobs.js";
+import * as pairing from "./pairing.js";
 import { EventEmitter } from "node:events";
 import type { WebSocket } from "ws";
 
@@ -38,7 +39,40 @@ export class Body extends EventEmitter {
     return this.socket !== null;
   }
 
+  /// A new connection: only a paired phone gets in (see pairing.ts). Until
+  /// it proves it, nothing it sends is used and nothing is sent to it.
   attach(socket: WebSocket): void {
+    const nb = pairing.nonce();
+    let done = false;
+    const send = (m: unknown) => socket.send(JSON.stringify(m));
+    send({ type: "welcome", brain: pairing.brainId(), nonce: nb });
+    const onMessage = (raw: unknown, isBinary: boolean) => {
+      if (done || isBinary) return;
+      let msg: any;
+      try { msg = JSON.parse(String(raw)); } catch { return; }
+      const device = String(msg.device ?? "a phone").slice(0, 80);
+      if (msg.type === "pair_request") {
+        const c = pairing.pairingCode();
+        this.emit("pair_request", { device, code: c.code, until: c.until });
+      } else if (msg.type === "pair") {
+        const r = pairing.pair(nb, String(msg.nonce ?? ""), String(msg.proof ?? ""), device);
+        if ("error" in r) send({ type: "pair_failed", why: r.error });
+        else { send({ type: "paired", ...r }); this.emit("paired", device); }
+      } else if (msg.type === "auth") {
+        const r = pairing.auth(nb, String(msg.nonce ?? ""), String(msg.proof ?? ""));
+        if (!r) { send({ type: "auth_failed" }); return; }
+        done = true;
+        socket.off("message", onMessage);
+        send({ type: "authed", proof: r.proof });
+        this.adopt(socket);
+      }
+    };
+    socket.on("message", onMessage);
+    const t = setTimeout(() => { if (!done) socket.close(4001, "not paired"); }, 15 * 60_000);
+    socket.on("close", () => clearTimeout(t));
+  }
+
+  private adopt(socket: WebSocket): void {
     if (this.socket) this.socket.close(1000, "replaced by a newer connection");
     this.socket = socket;
     socket.on("message", (raw, isBinary) => {

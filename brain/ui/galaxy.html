@@ -110,6 +110,8 @@ body { background: var(--bg); color: var(--fg); font-family: var(--body); overfl
 .sys { display: grid; grid-template-columns: auto 1fr; gap: 5px 10px; font: 400 11px/1.3 var(--mono); }
 .sys dt { color: var(--dim); } .sys dd { margin: 0; overflow-wrap: anywhere; }
 /* Rooms browser: the rooms she remembers, their maps and camera memory. */
+.pairing { align-self: center; font: 400 13px/1.4 var(--body); padding: 10px 16px; border-radius: 12px; background: var(--panel); border: 1px solid var(--accent); text-align: center; }
+.pairing b { font: 600 22px/1.2 var(--mono); letter-spacing: .12em; display: block; margin: 2px 0; }
 .roomsBtn { font: 500 11px/1 var(--mono); letter-spacing: .06em; color: var(--fg); background: var(--panel); border: 1px solid var(--faint);
   border-radius: 999px; padding: 7px 12px; cursor: pointer; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
 .roomsBtn:hover { border-color: var(--accent); } .roomsBtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -195,6 +197,7 @@ body { background: var(--bg); color: var(--fg); font-family: var(--body); overfl
     <button class="roomsBtn" id="roomsBtn" type="button" aria-haspopup="dialog">Rooms</button>
     <span class="status" id="status" data-state="off"><i></i><span>Connecting</span></span>
   </div>
+  <div class="pairing" id="pairing" role="status" hidden>Pairing code for your phone<b id="pairCode"></b><span id="pairUntil"></span></div>
   <div class="caption" id="caption" hidden><b id="captionKind">Heard</b><span id="captionText"></span></div>
   <div class="spacer"></div>
   <div class="bottom">
@@ -937,6 +940,16 @@ body { background: var(--bg); color: var(--fg); font-family: var(--body); overfl
   addEventListener('resize', () => { if (!panel.hidden) drawMap(); });
   matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => { if (!panel.hidden) drawMap(); });
   if (location.hash === '#rooms') setTimeout(open, 0);
+  // A phone asking to pair: show the code here too.
+  async function pollPairing() {
+    try {
+      const p = await (await fetch('/pairing', { cache: 'no-store' })).json();
+      const box = $('#pairing');
+      box.hidden = !p.code;
+      if (p.code) { $('#pairCode').textContent = `${p.code.code.slice(0, 3)} ${p.code.code.slice(3)}`; $('#pairUntil').textContent = `enter it on the phone · valid until ${new Date(p.code.until).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`; }
+    } catch {}
+  }
+  setInterval(pollPairing, 3000); pollPairing();
   addEventListener('hashchange', () => { if (location.hash === '#rooms' && panel.hidden) open(); });
 })();
 </script>
