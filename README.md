@@ -2,6 +2,8 @@
 
 The mind for the characters in the [Drillin AIR](https://apps.apple.com/app/id6781338560) iPhone app.
 
+![The mind's galaxy: every organ, memory, dream, tool and move of the brain, lit up live as she thinks](docs/galaxy.png)
+
 Your Gaussian-splat characters live in your room in AR. They walk, talk, remember you and learn new moves. Their mind is **Claude**, running in **Claude Code** on your own computer. OpenDrillinAIR is the brain that connects Claude to the phone. It has the body tools, ears, voice, memory, dreams and a live "galaxy" view of the mind.
 
 - **No API key.** The mind is your own Claude Code chat. It runs on your Claude plan (Pro or Max), and usage counts toward that plan's limits.
@@ -38,7 +40,7 @@ cd OpenDrillinAIR
 
 The phone finds the brain by itself through Bonjour. If it doesn't, enter the computer's address in Settings → Brain address, for example `192.168.1.20:8787`.
 
-The mind's galaxy is at **http://localhost:8788** on the computer. It shows every organ, memory, dream, behaviour, tool and move, and lights up what she's doing right now.
+The mind’s galaxy (pictured above) is at **http://localhost:8788** on the computer. It shows every organ, memory, dream, behaviour, tool and move, and lights up what she's doing right now.
 
 ### While she lives
 
